@@ -387,11 +387,11 @@ public static class Token{
 }
 
 
-class MainClass
+public static class RunasCsMainClass
 {
     private static string help = @"
 
-RunasCs v1.0 - @splinter_code
+RunasCs v1.1 - @splinter_code
 
 RunasCs is an utility to run specific processes with different permissions than the user's current logon provides
 using explicit credentials.
@@ -534,10 +534,9 @@ Examples:
             createProcessFunction = Convert.ToInt32(arguments[6]);
         return createProcessFunction;
     }
-
-    static void Main(string[] args)
-    {
-        
+    
+    public static string RunasCsMain(string[] args){
+        string output="";
         if (args.Length == 1 && HelpRequired(args[0]))
         {
             DisplayHelp();
@@ -552,8 +551,15 @@ Examples:
             uint processTimeout = ParseProcessTimeout(args);
             int logonType = ParseLogonType(args);
             int createProcessFunction = ParseCreateProcessFunction(args);
-            string output_func=RunasCs.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction);
-            Console.Out.Write(output_func);
-        }            
+            output=RunasCs.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction);
+        }
+        return output;
+    }
+}
+
+class MainClass{
+    static void Main(string[] args)
+    {
+        Console.Out.Write(RunasCsMainClass.RunasCsMain(args));
     }
 }
