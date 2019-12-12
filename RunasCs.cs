@@ -114,8 +114,8 @@ public static class RunasCs
     private static extern bool CreateProcessWithTokenW(IntPtr hToken, int dwLogonFlags, string lpApplicationName, string lpCommandLine, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, [In] ref STARTUPINFO lpStartupInfo, out ProcessInformation lpProcessInformation);
     
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe, SECURITY_ATTRIBUTES lpPipeAttributes, int nSize);
-    
+    private static extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe, ref SECURITY_ATTRIBUTES lpPipeAttributes, uint nSize);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool ReadFile(IntPtr hFile, [Out] byte[] lpBuffer, uint nNumberOfBytesToRead, out uint lpNumberOfBytesRead, IntPtr lpOverlapped);
 
@@ -195,7 +195,7 @@ public static class RunasCs
         sa.Length = Marshal.SizeOf(sa);
         sa.lpSecurityDescriptor = IntPtr.Zero;
         sa.bInheritHandle = true;
-        if (CreatePipe(out hReadPipe, out hWritePipe, sa, BUFFER_SIZE_PIPE))
+        if (CreatePipe(out hReadPipe, out hWritePipe, ref sa, (uint)BUFFER_SIZE_PIPE))
             return true;
         return false;
     }
@@ -578,6 +578,7 @@ public class WindowStationDACL{
         }
         else{
             Console.Out.Write("\r\nThe username " + fqan + " has not been found.\r\n");
+            Console.Out.Write("\r\nLookupAccountName failed with error code " + Marshal.GetLastWin32Error());
             this.CleanupHandles(-1);
         }
         if (err == 0)
@@ -586,6 +587,7 @@ public class WindowStationDACL{
             Marshal.Copy(Sid, 0, userSid, (int)cbSid);
         }
         else{
+            Console.Out.Write("\r\nThe username " + fqan + " has not been found.\r\n");
             Console.Out.Write("\r\nLookupAccountName failed with error code " + Marshal.GetLastWin32Error());
             this.CleanupHandles(-1);
         }
