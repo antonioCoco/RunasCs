@@ -601,10 +601,9 @@ public class WindowStationDACL{
         AceHeader.AceFlags = aceFlags;
         AceHeader.AceSize = (short)aceSize;
         IntPtr pNewAcePtr = Marshal.AllocHGlobal((int)aceSize);
-        ACCESS_ALLOWED_ACE pNewAceStruct = new ACCESS_ALLOWED_ACE {
-            Header = AceHeader,
-            Mask = mask
-        };
+        ACCESS_ALLOWED_ACE pNewAceStruct = new ACCESS_ALLOWED_ACE();
+        pNewAceStruct.Header = AceHeader;
+        pNewAceStruct.Mask = mask;
         Marshal.StructureToPtr(pNewAceStruct, pNewAcePtr, false);
         IntPtr sidStartPtr = new IntPtr(pNewAcePtr.ToInt64() + offset);
         if (!CopySid((uint)GetLengthSid(this.userSid), sidStartPtr, this.userSid))
