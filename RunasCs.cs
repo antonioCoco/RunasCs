@@ -1,23 +1,20 @@
 using System;
-using System.IO;
 using System.Runtime.InteropServices;
-using System.Security.Principal;
-using System.Security.Permissions;
-using System.Security.AccessControl;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 public static class RunasCs
 {
     private const string error_string = "{{{RunasCsException}}}";
     private const UInt16 SW_HIDE = 0;
     private const Int32 Startf_UseStdHandles = 0x00000100;
-    private const Int32 StdOutputHandle = -11;
-    private const Int32 StdErrorHandle = -12;
     private const int TokenType = 1; //primary token
     private const uint GENERIC_ALL = 0x10000000;
     private const int LOGON32_PROVIDER_DEFAULT = 0; 
     private const uint CREATE_NO_WINDOW = 0x08000000;
     private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
+    private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
+    private const int BUFFER_SIZE_PIPE = 1048576;
     
     [StructLayout(LayoutKind.Sequential)]
     private struct LUID 
@@ -41,27 +38,27 @@ public static class RunasCs
         public UInt32 Attributes;
     }
     
-    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Auto)]
-    private struct StartupInfo
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct STARTUPINFO
     {
-        public int    cb;
-        public String reserved;
-        public String desktop;
-        public String title;
-        public int    x;
-        public int    y;
-        public int    xSize;
-        public int    ySize;
-        public int    xCountChars;
-        public int    yCountChars;
-        public int    fillAttribute;
-        public int    flags;
-        public UInt16 showWindow;
-        public UInt16 reserved2;
-        public byte   reserved3;
-        public IntPtr stdInput;
-        public IntPtr stdOutput;
-        public IntPtr stdError;
+         public Int32 cb;
+         public string lpReserved;
+         public string lpDesktop;
+         public string lpTitle;
+         public Int32 dwX;
+         public Int32 dwY;
+         public Int32 dwXSize;
+         public Int32 dwYSize;
+         public Int32 dwXCountChars;
+         public Int32 dwYCountChars;
+         public Int32 dwFillAttribute;
+         public Int32 dwFlags;
+         public Int16 wShowWindow;
+         public Int16 cbReserved2;
+         public IntPtr lpReserved2;
+         public IntPtr hStdInput;
+         public IntPtr hStdOutput;
+         public IntPtr hStdError;
     }
 
     private struct ProcessInformation
@@ -72,7 +69,8 @@ public static class RunasCs
         public int    threadId;
     }
     
-    [StructLayout(LayoutKind.Sequential)] private struct SECURITY_ATTRIBUTES
+    [StructLayout(LayoutKind.Sequential)] 
+    private struct SECURITY_ATTRIBUTES
     {
         public int    Length;
         public IntPtr lpSecurityDescriptor;
@@ -107,36 +105,24 @@ public static class RunasCs
     private static extern bool DuplicateTokenEx(IntPtr ExistingTokenHandle, uint dwDesiredAccess, ref SECURITY_ATTRIBUTES lpThreadAttributes, SECURITY_IMPERSONATION_LEVEL ImpersonationLevel, int TokenType, ref IntPtr DuplicateTokenHandle);
     
     [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
-    private static extern bool CreateProcessWithLogonW(String userName,String domain,String password,UInt32 logonFlags,String applicationName,String commandLine,uint creationFlags,UInt32 environment,String currentDirectory,ref   StartupInfo startupInfo,out  ProcessInformation processInformation);
+    private static extern bool CreateProcessWithLogonW(String userName,String domain,String password,UInt32 logonFlags,String applicationName,String commandLine,uint creationFlags,UInt32 environment,String currentDirectory,ref STARTUPINFO startupInfo,out  ProcessInformation processInformation);
     
     [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Auto)]
-    private static extern bool CreateProcessAsUser(IntPtr hToken,string lpApplicationName,string lpCommandLine,ref SECURITY_ATTRIBUTES lpProcessAttributes,ref SECURITY_ATTRIBUTES lpThreadAttributes,bool bInheritHandles,uint dwCreationFlags,IntPtr lpEnvironment,string lpCurrentDirectory,ref StartupInfo lpStartupInfo,out ProcessInformation lpProcessInformation);  
+    private static extern bool CreateProcessAsUser(IntPtr hToken,string lpApplicationName,string lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes,bool bInheritHandles,uint dwCreationFlags,IntPtr lpEnvironment,string lpCurrentDirectory,ref STARTUPINFO lpStartupInfo,out ProcessInformation lpProcessInformation);  
 
     [DllImport("advapi32", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern bool CreateProcessWithTokenW(IntPtr hToken, int dwLogonFlags, string lpApplicationName, string lpCommandLine, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, [In] ref StartupInfo lpStartupInfo, out ProcessInformation lpProcessInformation);
+    private static extern bool CreateProcessWithTokenW(IntPtr hToken, int dwLogonFlags, string lpApplicationName, string lpCommandLine, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, [In] ref STARTUPINFO lpStartupInfo, out ProcessInformation lpProcessInformation);
     
-    //https://stackoverflow.com/questions/1344221/how-can-i-generate-random-alphanumeric-strings
-    private static string GenRandomString(int length)
-    {
-        string chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-        char[] stringChars = new char[length];
-        Random random = new Random();
-        for (int i = 0; i < stringChars.Length; i++)
-        {
-            stringChars[i] = chars[random.Next(chars.Length)];
-        }
-        string finalString = new String(stringChars);
-        return finalString;
-    }
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe, SECURITY_ATTRIBUTES lpPipeAttributes, int nSize);
     
-    private static void GrantEveryoneAccess(string fullPath)
-    {
-        DirectoryInfo dInfo = new DirectoryInfo(fullPath);
-        DirectorySecurity dSecurity = dInfo.GetAccessControl();
-        dSecurity.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.WorldSid, null), FileSystemRights.FullControl, InheritanceFlags.ObjectInherit | InheritanceFlags.ContainerInherit, PropagationFlags.NoPropagateInherit, AccessControlType.Allow));
-        dInfo.SetAccessControl(dSecurity);
-    }
-    
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool ReadFile(IntPtr hFile, [Out] byte[] lpBuffer, uint nNumberOfBytesToRead, out uint lpNumberOfBytesRead, IntPtr lpOverlapped);
+
+    [DllImport("kernel32.dll", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DuplicateHandle(IntPtr hSourceProcessHandle, IntPtr hSourceHandle, IntPtr hTargetProcessHandle, out IntPtr lpTargetHandle, uint dwDesiredAccess, [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle, uint dwOptions);
+       
     private static string EnablePrivilege(string privilege, IntPtr token){
         string output = "";
         LUID sebLuid = new LUID();
@@ -195,7 +181,28 @@ public static class RunasCs
         return output;
     }
     
-    [PermissionSetAttribute(SecurityAction.Demand, Name = "FullTrust")]
+    private static bool CreateAnonymousPipeEveryoneAccess(ref IntPtr hReadPipe, ref IntPtr hWritePipe)
+    {
+        SECURITY_ATTRIBUTES sa = new SECURITY_ATTRIBUTES();
+        sa.Length = Marshal.SizeOf(sa);
+        sa.lpSecurityDescriptor = IntPtr.Zero;
+        sa.bInheritHandle = true;
+        if (CreatePipe(out hReadPipe, out hWritePipe, sa, BUFFER_SIZE_PIPE))
+            return true;
+        return false;
+    }
+    
+    private static string ReadOutputFromPipe(IntPtr hReadPipe){
+        string output = "";
+        uint dwBytesRead=0;
+        byte[] buffer = new byte[BUFFER_SIZE_PIPE];
+        if(!ReadFile(hReadPipe, buffer, BUFFER_SIZE_PIPE, out dwBytesRead, IntPtr.Zero)){
+            output+="\r\nNo output received from the process.\r\n";
+        }
+        output += System.Text.Encoding.Default.GetString(buffer, 0, (int)dwBytesRead);
+        return output;
+    }
+    
     public static string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction)
     /*
         int createProcessFunction:
@@ -205,51 +212,66 @@ public static class RunasCs
     */
     {
         bool success;
-        string output="";    
-        StartupInfo startupInfo = new StartupInfo();
-        startupInfo.reserved = null;
-        startupInfo.flags &= Startf_UseStdHandles;
-        //startupInfo.showWindow = SW_HIDE;
-        startupInfo.stdOutput = (IntPtr)StdOutputHandle;
-        startupInfo.stdError = (IntPtr)StdErrorHandle;
+        string output="";   
+        IntPtr hOutputReadTmp = new IntPtr(0);
+        IntPtr hOutputRead = new IntPtr(0);
+        IntPtr hOutputWrite = new IntPtr(0);
+        IntPtr hErrorWrite = new IntPtr(0);
+        IntPtr hCurrentProcess = Process.GetCurrentProcess().Handle;
+        STARTUPINFO startupInfo = new STARTUPINFO();
+        startupInfo.cb = Marshal.SizeOf(startupInfo);
+        startupInfo.lpReserved = null;
         ProcessInformation processInfo = new ProcessInformation();
-        String currentDirectory = System.IO.Directory.GetCurrentDirectory();
-        string outfile = Environment.GetEnvironmentVariable("TEMP") + "\\" + GenRandomString(5); 
+        String tempDirectory = Environment.GetEnvironmentVariable("SYSTEMROOT") + "\\Temp";
         String commandLine = "";
         if(processTimeout>0){
-            cmd = cmd.Replace("\"", "\"\"");
-            File.Create(outfile).Dispose();
-            GrantEveryoneAccess(outfile);
-            commandLine = Environment.GetEnvironmentVariable("ComSpec") + " /c \"" + cmd + "\" >> " + outfile + " 2>&1";
+            if (!CreateAnonymousPipeEveryoneAccess(ref hOutputReadTmp, ref hOutputWrite)){
+                output += error_string + "\r\nCreatePipe failed with error code: " + Marshal.GetLastWin32Error();
+                return output;
+            }
+            if (!DuplicateHandle(hCurrentProcess, hOutputWrite, hCurrentProcess,out hErrorWrite, 0, true, DUPLICATE_SAME_ACCESS)){
+                output += error_string + "\r\nDuplicateHandle stderr write pipe failed with error code: " + Marshal.GetLastWin32Error();
+                return output;
+            }
+            if (!DuplicateHandle(hCurrentProcess, hOutputReadTmp, hCurrentProcess, out hOutputRead, 0, false, DUPLICATE_SAME_ACCESS)){
+                output += error_string + "\r\nDuplicateHandle stdout read pipe failed with error code: " + Marshal.GetLastWin32Error();
+                return output;
+            }
+            CloseHandle(hOutputReadTmp);
+            startupInfo.dwFlags = Startf_UseStdHandles;
+            startupInfo.hStdOutput = (IntPtr)hOutputWrite;
+            startupInfo.hStdError = (IntPtr)hErrorWrite;
+            commandLine = "/c " + cmd;
         }
         else{
             commandLine = cmd;
         }
+        
         if(createProcessFunction == 2){
-            success = CreateProcessWithLogonW(username, domainName, password, (UInt32) 1, null, commandLine, CREATE_NO_WINDOW, (UInt32) 0, currentDirectory, ref startupInfo, out processInfo);
+            success = CreateProcessWithLogonW(username, domainName, password, (UInt32) 1, Environment.GetEnvironmentVariable("ComSpec"), commandLine, CREATE_NO_WINDOW, (UInt32) 0, tempDirectory, ref startupInfo, out processInfo);
             if (success == false){
                 output += error_string + "\r\nCreateProcessWithLogonW failed with " + Marshal.GetLastWin32Error();
                 return output;
             }
         }
         else{
-            startupInfo.desktop = "Winsta0\\default";
+            startupInfo.lpDesktop = "Winsta0\\default";
             IntPtr hToken = new IntPtr(0);
             IntPtr hTokenDuplicate = new IntPtr(0);
             success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
             if(success == false)
             {
-                output += error_string + "\r\nWrong Credentials. LogonUser failed with error code : " + Marshal.GetLastWin32Error();
+                output += error_string + "\r\nWrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error();
                 return output;
             }
             SECURITY_ATTRIBUTES sa  = new SECURITY_ATTRIBUTES();
-            sa.bInheritHandle       = false;
+            sa.bInheritHandle       = true;
             sa.Length               = Marshal.SizeOf(sa);
             sa.lpSecurityDescriptor = (IntPtr)0;
-            success = DuplicateTokenEx(hToken, GENERIC_ALL, ref sa, SECURITY_IMPERSONATION_LEVEL.SecurityIdentification, TokenType, ref hTokenDuplicate);
+            success = DuplicateTokenEx(hToken, GENERIC_ALL, ref sa, SECURITY_IMPERSONATION_LEVEL.SecurityDelegation, TokenType, ref hTokenDuplicate);
             if(success == false)
             {
-                output += error_string + "\r\nDuplicateTokenEx failed with error code : " + Marshal.GetLastWin32Error();
+                output += error_string + "\r\nDuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error();
                 return output;
             }
             
@@ -258,7 +280,7 @@ public static class RunasCs
                 EnableAllPrivileges(hTokenDuplicate);
                 
             if(createProcessFunction == 0){
-                success = CreateProcessAsUser(hTokenDuplicate,null, commandLine, ref sa, ref sa, false, CREATE_NO_WINDOW, (IntPtr)0, currentDirectory, ref startupInfo, out processInfo);
+                success = CreateProcessAsUser(hTokenDuplicate,Environment.GetEnvironmentVariable("ComSpec"), commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW, IntPtr.Zero, tempDirectory, ref startupInfo, out processInfo);
                 if(success == false)
                 {
                     output += error_string + "\r\nCreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error();
@@ -266,7 +288,7 @@ public static class RunasCs
                 }
             }
             if(createProcessFunction == 1){
-                success = CreateProcessWithTokenW(hTokenDuplicate, 0, null, commandLine, CREATE_NO_WINDOW, (IntPtr)0, currentDirectory, ref startupInfo, out processInfo);
+                success = CreateProcessWithTokenW(hTokenDuplicate, 0, Environment.GetEnvironmentVariable("ComSpec"), commandLine, CREATE_NO_WINDOW, IntPtr.Zero, tempDirectory, ref startupInfo, out processInfo);
                 if(success == false)
                 {
                     output += error_string + "\r\nCreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error();
@@ -277,9 +299,11 @@ public static class RunasCs
             CloseHandle(hTokenDuplicate);
         }
         if(processTimeout>0){
+            CloseHandle(hOutputWrite);
+            CloseHandle(hErrorWrite);
             WaitForSingleObject(processInfo.process, processTimeout);
-            output += File.ReadAllText(outfile);
-            File.Delete(outfile);
+            output += ReadOutputFromPipe(hOutputRead);
+            CloseHandle(hOutputRead);
         }
         else
             output += "\r\nAsync process with pid " + processInfo.processId + " created and left in background.\r\n";
@@ -508,7 +532,7 @@ Examples:
     private static int ParseCreateProcessFunction(string[] arguments){
         //auto detect the create process function based on current privileges
         int createProcessFunction = 2;//default createProcessWithLogonW()
-        IntPtr currentTokenHandle = WindowsIdentity.GetCurrent().Token;        
+        IntPtr currentTokenHandle = System.Security.Principal.WindowsIdentity.GetCurrent().Token;        
         List<string[]> privs = new List<string[]>();
         privs = Token.getTokenPrivileges(currentTokenHandle);
         bool SeIncreaseQuotaPrivilegeAssigned = false;
