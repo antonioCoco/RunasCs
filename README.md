@@ -2,8 +2,9 @@
 <p>RunasCs is an utility to run specific processes with different permissions than the user's current logon provides using explicit credentials.</p>
 <p>This tool is an improved (from a pentest perspective) and open version of windows builtin runas.exe that solves some limitations:</p>
 <ul>
-  <li> Allows explicit credentials;</li>
+  <li>Allows explicit credentials;</li>
   <li>Works both if spawned from interactive process and from service process;</li>
+  <li>Manage properly DACL for Window Stations and Desktop for the creation of the new process;</li>
   <li>Uses more reliable and free create process functions like CreateProcessAsUser() and CreateProcessWithTokenW() if the calling process holds the required privileges (automatic detection);</li>
   <li>Allows to specify the logon type, i.e. network logon 3 (no UAC limitations);</li>
   <li>It's Open Source :)</li>
@@ -30,7 +31,7 @@ Based on the caller token permissions, it will use one of the create process fun
     1. CreateProcessAsUser();
     2. CreateProcessWithTokenW();
     3. CreateProcessWithLogonW().
-The two processes (calling and called) will communicate through 1 file (both for stdout and stderr).
+The two processes (calling and called) will communicate through 1 pipe (both for stdout and stderr).
 The default logon type is 3 (Network_Logon).
 If you set Interactive (2) logon type you will face some UAC restriction problems.
 You can make interactive logon without any restrictions by setting the following regkey to 0 and restart the server:
@@ -81,7 +82,12 @@ Examples:
 ```
 
 ## References
-https://decoder.cloud/2018/01/13/potato-and-tokens/
+- https://decoder.cloud/2018/01/13/potato-and-tokens/
+- https://github.com/dahall/Vanara
+- https://docs.microsoft.com/en-us/previous-versions/aa379608(v=vs.85)
+- https://support.microsoft.com/en-us/help/190351/how-to-spawn-console-processes-with-redirected-standard-handles
+- https://support.microsoft.com/en-us/help/327618/security-services-and-the-interactive-desktop-in-windows
+- https://blogs.msdn.microsoft.com/winsdk/2015/06/03/what-is-up-with-the-application-failed-to-initialize-properly-0xc0000142-error/
 
 ## Credits
 <a href="https://github.com/decoder-it">@decoder</a>
