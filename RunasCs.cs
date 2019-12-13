@@ -1025,7 +1025,7 @@ public static class RunasCsMainClass
 {
     private static string help = @"
 
-RunasCs v1.1 - @splinter_code
+RunasCs v1.2 - @splinter_code
 
 RunasCs is an utility to run specific processes with different permissions than the user's current logon provides
 using explicit credentials.
@@ -1034,7 +1034,7 @@ Based on the caller token permissions, it will use one of the create process fun
     1. CreateProcessAsUser();
     2. CreateProcessWithTokenW();
     3. CreateProcessWithLogonW().
-The two processes (calling and called) will communicate through 1 file (both for stdout and stderr).
+The two processes (calling and called) will communicate through 1 pipe (both for stdout and stderr).
 The default logon type is 3 (Network_Logon).
 If you set Interactive (2) logon type you will face some UAC restriction problems.
 You can make interactive logon without any restrictions by setting the following regkey to 0 and restart the server:
