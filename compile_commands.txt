@@ -1,16 +1,8 @@
-x64 net4:
+net4:
 
-C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe -target:exe -optimize -out:RunasCs_net4_x64.exe RunasCs.cs
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe -target:exe -optimize -out:RunasCs_net4.exe RunasCs.cs
 
-x86 net4:
 
-C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe -target:exe -optimize -out:RunasCs_net4_x86.exe RunasCs.cs
+net2:
 
-x64 net2:
-
-C:\Windows\Microsoft.NET\Framework64\v2.0.50727\csc.exe -target:exe -optimize -out:RunasCs_net2_x64.exe RunasCs.cs
-
-x86 net2:
-
-C:\Windows\Microsoft.NET\Framework\v2.0.50727\csc.exe -target:exe -optimize -out:RunasCs_net2_x86.exe RunasCs.cs
-
+C:\Windows\Microsoft.NET\Framework64\v2.0.50727\csc.exe -target:exe -optimize -out:RunasCs_net2.exe RunasCs.cs
