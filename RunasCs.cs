@@ -1271,7 +1271,7 @@ Examples:
             if (SeImpersonatePrivilegeAssigned)
                 createProcessFunction = 1;
         //if a create process function is forced, use it. It should be just for debug.
-        if (arguments.Length > 6)
+        if (arguments.Length > 6 && arguments[6] != "")
             createProcessFunction = Convert.ToInt32(arguments[6]);
         return createProcessFunction;
     }
