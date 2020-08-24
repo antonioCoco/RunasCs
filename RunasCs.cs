@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 using System.Runtime.InteropServices;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -12,6 +13,7 @@ public static class RunasCs
     private const uint GENERIC_ALL = 0x10000000;
     private const int LOGON32_PROVIDER_DEFAULT = 0; 
     private const uint CREATE_NO_WINDOW = 0x08000000;
+    private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
     private const int BUFFER_SIZE_PIPE = 1048576;
@@ -90,7 +92,13 @@ public static class RunasCs
     
     [DllImport("Kernel32.dll", SetLastError=true)]
     private static extern UInt32 WaitForSingleObject(IntPtr handle, UInt32 milliseconds);
-    
+
+    [DllImport("advapi32.dll", SetLastError=true)]
+    static extern bool ImpersonateLoggedOnUser(IntPtr hToken);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    static extern bool RevertToSelf();
+
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool AdjustTokenPrivileges(IntPtr tokenhandle, bool disableprivs, [MarshalAs(UnmanagedType.Struct)]ref TOKEN_PRIVILEGES Newstate, int bufferlength, int PreivousState, int Returnlength);
     
@@ -122,6 +130,15 @@ public static class RunasCs
     [DllImport("kernel32.dll", SetLastError=true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DuplicateHandle(IntPtr hSourceProcessHandle, IntPtr hSourceHandle, IntPtr hTargetProcessHandle, out IntPtr lpTargetHandle, uint dwDesiredAccess, [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle, uint dwOptions);
+
+    [DllImport("userenv.dll", SetLastError=true)]
+    static extern bool CreateEnvironmentBlock( out IntPtr lpEnvironment, IntPtr hToken, bool bInherit );
+
+    [DllImport("userenv.dll", SetLastError=true)]
+    static extern bool DestroyEnvironmentBlock(IntPtr lpEnvironment);
+
+    [DllImport("userenv.dll", SetLastError=true, CharSet=CharSet.Auto)]
+    static extern bool GetUserProfileDirectory(IntPtr hToken, StringBuilder path, ref int dwSize);
     
     private static string GetProcessFunction(int createProcessFunction){
         if(createProcessFunction == 0)
@@ -207,8 +224,85 @@ public static class RunasCs
         if(!ReadFile(hReadPipe, buffer, BUFFER_SIZE_PIPE, out dwBytesRead, IntPtr.Zero)){
             output+="\r\nNo output received from the process.\r\n";
         }
-        output += System.Text.Encoding.Default.GetString(buffer, 0, (int)dwBytesRead);
+        output += Encoding.Default.GetString(buffer, 0, (int)dwBytesRead);
         return output;
+    }
+
+    private static bool getUserEnvironmentBlock(IntPtr hToken, out IntPtr lpEnvironment, out string warning) {
+
+        bool success;
+        warning = "";
+        lpEnvironment = new IntPtr(0);
+
+        success = ImpersonateLoggedOnUser(hToken);
+        if(success == false) {
+            warning = "[*] Warning: ImpersonateLoggedOnUser failed with error code: " + Marshal.GetLastWin32Error();
+            return false;
+        }
+
+        success = CreateEnvironmentBlock(out lpEnvironment, hToken, false);
+        if(success == false)
+        {
+            warning = "[*] Warning: lpEnvironment failed with error code: " + Marshal.GetLastWin32Error() + ".\n";
+            return false;
+        }
+
+        // obtain USERPROFILE value
+        int dwSize = 0;
+        GetUserProfileDirectory(hToken, null, ref dwSize);
+        StringBuilder profileDir = new StringBuilder(dwSize);
+        success = GetUserProfileDirectory(hToken, profileDir, ref dwSize);
+        if(success == false)
+        {
+            warning = "[*] Warning: GetUserProfileDirectory failed with error code: " + Marshal.GetLastWin32Error();
+            return false;
+        }
+
+        // EnvironmentBlock format: Unicode-Str\0Unicode-Str\0...Unicode-Str\0\0.
+        // Search for the \0\0 sequence to determine the end of the EnvironmentBlock.
+        int count = 0;
+        unsafe {
+            short *start = (short*)lpEnvironment.ToPointer();
+            while( *start != 0 || *(start - 1) != 0 ) {
+                count += 2;
+                start += 1;
+            }
+        }
+
+        // copy raw environment to a managed array and free the unmanaged block
+        byte[] managedArray = new byte[count];
+        Marshal.Copy(lpEnvironment, managedArray, 0, count);
+        DestroyEnvironmentBlock(lpEnvironment);
+
+        string environmentString = Encoding.Unicode.GetString(managedArray);
+        string[] envVariables = environmentString.Split((char)0x00);
+
+        // Construct new user environment. Currently only USERPROFILE is replaced.
+        // Other replacements could be inserted here.
+        List<byte> newEnv = new List<byte>();
+        foreach( string variable in envVariables ) {
+
+            if( variable.StartsWith("USERPROFILE=") ) {
+                newEnv.AddRange(Encoding.Unicode.GetBytes("USERPROFILE=" + profileDir.ToString() + "\u0000"));
+            } else {
+                newEnv.AddRange(Encoding.Unicode.GetBytes(variable + "\u0000"));
+            }
+        }
+
+        // finalize EnvironmentBlock. Desired end: \0\0
+        newEnv.Add(0x00);
+        managedArray = newEnv.ToArray();
+        lpEnvironment = Marshal.AllocHGlobal(managedArray.Length);
+        Marshal.Copy(managedArray, 0, lpEnvironment, managedArray.Length);
+
+        success = RevertToSelf();
+        if(success == false)
+        {
+            warning = "[*] Warning: RevertToSelf failed with error code: " + Marshal.GetLastWin32Error();
+            return false;
+        }
+
+        return true;
     }
     
     public static string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction)
@@ -276,7 +370,7 @@ public static class RunasCs
                 output += error_string + "\r\nWrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error();
                 return output;
             }
-            
+
             SECURITY_ATTRIBUTES sa  = new SECURITY_ATTRIBUTES();
             sa.bInheritHandle       = true;
             sa.Length               = Marshal.SizeOf(sa);
@@ -287,13 +381,23 @@ public static class RunasCs
                 output += error_string + "\r\nDuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error();
                 return output;
             }
-            
+
+            // obtain environmentBlock for desired user
+            string warning;
+            IntPtr lpEnvironment;
+            success = getUserEnvironmentBlock(hTokenDuplicate, out lpEnvironment, out warning);
+            if(success == false) {
+                Console.Out.WriteLine(warning);
+                Console.Out.WriteLine(String.Format("[*] Warning: Unable to obtain environment for user '{0}'.", username));
+                Console.Out.WriteLine(String.Format("[*] Warning: Environment of created process might be incorrect.", username));
+            }
+
             //enable all privileges assigned to the token
             if(logonType != 3 && logonType != 8)
                 EnableAllPrivileges(hTokenDuplicate);
                 
             if(createProcessFunction == 0){
-                success = CreateProcessAsUser(hTokenDuplicate, processPath, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW, IntPtr.Zero, null, ref startupInfo, out processInfo);
+                success = CreateProcessAsUser(hTokenDuplicate, processPath, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, null, ref startupInfo, out processInfo);
                 if(success == false)
                 {
                     output += error_string + "\r\nCreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error();
@@ -301,12 +405,16 @@ public static class RunasCs
                 }
             }
             if(createProcessFunction == 1){
-                success = CreateProcessWithTokenW(hTokenDuplicate, 0, processPath, commandLine, CREATE_NO_WINDOW, IntPtr.Zero, null, ref startupInfo, out processInfo);
+                success = CreateProcessWithTokenW(hTokenDuplicate, 0, processPath, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, null, ref startupInfo, out processInfo);
                 if(success == false)
                 {
                     output += error_string + "\r\nCreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error();
                     return output;
                 }
+            }
+
+            if( lpEnvironment != IntPtr.Zero ) {
+                DestroyEnvironmentBlock(lpEnvironment);
             }
             CloseHandle(hToken);
             CloseHandle(hTokenDuplicate);
@@ -535,7 +643,7 @@ public class WindowStationDACL{
     private static extern bool CopySid(uint nDestinationSidLength, IntPtr pDestinationSid, IntPtr pSourceSid);
     
     [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError = true)]
-    private static extern bool LookupAccountName(string lpSystemName, string lpAccountName, [MarshalAs(UnmanagedType.LPArray)] byte[] Sid, ref uint cbSid, System.Text.StringBuilder ReferencedDomainName, ref uint cchReferencedDomainName, out SID_NAME_USE peUse);        
+    private static extern bool LookupAccountName(string lpSystemName, string lpAccountName, [MarshalAs(UnmanagedType.LPArray)] byte[] Sid, ref uint cbSid, StringBuilder ReferencedDomainName, ref uint cchReferencedDomainName, out SID_NAME_USE peUse);
     
     
     private IntPtr hWinsta;
@@ -554,7 +662,7 @@ public class WindowStationDACL{
         string fqan = "";//Fully qualified account names
         byte [] Sid = null;
         uint cbSid = 0;
-        System.Text.StringBuilder referencedDomainName = new System.Text.StringBuilder();
+        StringBuilder referencedDomainName = new StringBuilder();
         uint cchReferencedDomainName = (uint)referencedDomainName.Capacity;
         SID_NAME_USE sidUse;
         int err = NO_ERROR;
@@ -880,7 +988,7 @@ public class WindowStationDACL{
             Console.Out.Write("\r\nGetUserObjectInformation failed with error code " + Marshal.GetLastWin32Error());
             this.CleanupHandles(-1);
         }
-        stationName=System.Text.Encoding.Default.GetString(stationNameBytes).Substring(0, (int)lengthNeeded-1);
+        stationName=Encoding.Default.GetString(stationNameBytes).Substring(0, (int)lengthNeeded-1);
 
         this.hWinsta = OpenWindowStation(stationName, false, ACCESS_MASK.READ_CONTROL | ACCESS_MASK.WRITE_DAC);
         if (this.hWinsta == IntPtr.Zero)
@@ -931,7 +1039,7 @@ public static class Token{
     
     [DllImport("advapi32.dll", SetLastError = true, CharSet=CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool LookupPrivilegeName(string lpSystemName, IntPtr lpLuid, System.Text.StringBuilder lpName, ref int cchName );
+    private static extern bool LookupPrivilegeName(string lpSystemName, IntPtr lpLuid, StringBuilder lpName, ref int cchName );
         
     enum TOKEN_INFORMATION_CLASS{
         TokenUser = 1,
@@ -997,7 +1105,7 @@ public static class Token{
         }
         TOKEN_PRIVILEGES TokenPrivileges = ( TOKEN_PRIVILEGES )Marshal.PtrToStructure( TokenInformation , typeof( TOKEN_PRIVILEGES ) ) ;
         for(int i=0;i<TokenPrivileges.PrivilegeCount;i++){
-            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            StringBuilder sb = new StringBuilder();
             int luidNameLen = 0;
             LUID luid = new LUID();
             string[] privilegeStatus = new string[2];
@@ -1016,7 +1124,6 @@ public static class Token{
             privileges.Add(privilegeStatus);
         }
         return privileges;
-        
     }
 }
 
