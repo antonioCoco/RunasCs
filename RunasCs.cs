@@ -559,7 +559,7 @@ public class WindowStationDACL{
         SID_NAME_USE sidUse;
         int err = NO_ERROR;
         
-        if(domain != "")
+        if(domain != "" && domain != ".")
             fqan = domain + "\\" + username;
         else
             fqan = username;
