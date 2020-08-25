@@ -1162,9 +1162,23 @@ Positional arguments:
     password                password of the user
     cmd                     command supported by cmd.exe if process_timeout>0
                             commandline for the process if process_timeout=0
-    domain                  domain of the user, if in a domain. 
+Optional arguments:
+    -d, --domain domain
+                            domain of the user, if in a domain. 
                             Default: """"
-    process_timeout         the waiting time (in ms) to use in 
+    -f, --function int
+                            CreateProcess function to use. When not specified
+                            RunasCs determines an appropriate CreateProcess
+                            function automatucally according to your privileges.
+    -l, --logon-type logon_type
+                            the logon type for the spawned process.
+                            Default: ""3""
+    -r, --remote host:port
+                            redirect stdin, stdout and stderr to a remote host.
+                            If not specified explicitly, the process timeout is
+                            set to 0.
+    -t, --timeout process_timeout
+                            the waiting time (in ms) to use in
                             the WaitForSingleObject() function.
                             This will halt the process until the spawned
                             process ends and sent the output back to the caller.
@@ -1173,8 +1187,6 @@ Positional arguments:
                             If this parameter is set to 0 it won't be
                             used cmd.exe to spawn the process.
                             Default: ""120000""
-    logon_type              the logon type for the spawned process.
-                            Default: ""3""
 
 Examples:
     Run a command as a specific local user
@@ -1192,69 +1204,108 @@ Examples:
 
 ";
     
+    private static Dictionary<int,string> logonTypes= new Dictionary<int,string>()
+    {
+        {2, "Interactive"},
+        {3, "Network"},
+        {4, "Batch"},
+        {5, "Service"},
+        {7, "Unlock"},
+        {8, "NetworkCleartext"},
+        {9, "NewCredentials"},
+        {10,"RemoteInteractive"},
+        {11,"CachedInteractive"}
+    };
+
+    private static Dictionary<int,string> createProcessFunctions= new Dictionary<int,string>()
+    {
+        {0, "CreateProcessAsUser"},
+        {1, "CreateProcessWithTokenW"},
+        {2, "CreateProcessWithLogonW"}
+    };
+
     private static bool HelpRequired(string param)
     {
         return param == "-h" || param == "--help" || param == "/?";
     }
     
-    private static void CheckArgs(string[] arguments)
+    private static uint ValidateProcessTimeout(string timeout)
     {
-        if(arguments.Length < 3){
-            Console.Out.Write("RunasCs: Not enough arguments. 3 Arguments required. Use --help for additional help.\r\n");
-            System.Environment.Exit(-1);
+        uint processTimeout = 12000;
+        try {
+            processTimeout = Convert.ToUInt32(timeout);
         }
-            
-    }
-    
-    private static void DisplayHelp()
-    {
-        Console.Out.Write(help);
-    }
-
-    private static string ParseDomain(string[] arguments){
-        string domain = "";
-        if (arguments.Length > 3)
-            domain = arguments[3];
-        return domain;
-    }
-    
-    private static uint ParseProcessTimeout(string[] arguments){
-        uint processTimeout = 120000;
-        if (arguments.Length > 4){
-            try{
-                processTimeout = Convert.ToUInt32(arguments[4]);
-            }
-            catch{
-                Console.Out.Write("RunasCs: Invalid process_timeout value: " + arguments[4].ToString());
-                System.Environment.Exit(-1);
-            }
+        catch {
+            Console.Out.WriteLine("[-] RunasCs: Invalid process_timeout value: " + timeout);
+            System.Environment.Exit(-1);
         }
         return processTimeout;
     }
+
+    private static string[] ValidateRemote(string remote)
+    {
+        string[] split = remote.Split(':');
+        if( split.Length != 2 ) {
+            Console.Out.WriteLine("[-] RunasCs: Invalid remote value: " + remote);
+            Console.Out.WriteLine("[-] Expected format: 'host:port'");
+            System.Environment.Exit(-1);
+        }
+        return split;
+    }
     
-    private static int ParseLogonType(string[] arguments){
+    private static int ValidateLogonType(string type)
+    {
         int logonType = 3;
-        if (arguments.Length > 5){
-            try{
-                logonType = Convert.ToInt32(arguments[5]);
+
+        try {
+            logonType = Convert.ToInt32(type);
+            if( !logonTypes.ContainsKey(logonType) ) {
+                throw new System.ArgumentException("");
             }
-            catch{
-                Console.Out.Write("RunasCs: Invalid logon_type value: " + arguments[5].ToString());
-                System.Environment.Exit(-1);
+        }
+        catch {
+            Console.Out.WriteLine("[-] RunasCs: Invalid logon_type value: " + type);
+            Console.Out.WriteLine("[-] Allowed values are:");
+            foreach(KeyValuePair<int,string> item in logonTypes) {
+                Console.Out.WriteLine(String.Format("[-]     {0}\t{1}", item.Key, item.Value));
             }
+            System.Environment.Exit(-1);
         }
         return logonType;
     }
     
-    private static int ParseCreateProcessFunction(string[] arguments){
-        //auto detect the create process function based on current privileges
-        int createProcessFunction = 2;//default createProcessWithLogonW()
+    private static int ValidateCreateProcessFunction(string function)
+    {
+        int createProcessFunction = 2;
+        try {
+            createProcessFunction = Convert.ToInt32(function);
+            if( createProcessFunction < 0 || createProcessFunction > 2 ) {
+                throw new System.ArgumentException("");
+            }
+        }
+        catch {
+            Console.Out.WriteLine("[-] RunasCs: Invalid createProcess function: " + function);
+            Console.Out.WriteLine("[-] Allowed values are:");
+            foreach(KeyValuePair<int,string> item in createProcessFunctions) {
+                Console.Out.WriteLine(String.Format("[-]     {0}\t{1}", item.Key, item.Value));
+            }
+            System.Environment.Exit(-1);
+        }
+        return createProcessFunction;
+    }
+
+    private static int DefaultCreateProcessFunction()
+    {
+        int createProcessFunction = 2;
         IntPtr currentTokenHandle = System.Security.Principal.WindowsIdentity.GetCurrent().Token;        
+
         List<string[]> privs = new List<string[]>();
         privs = Token.getTokenPrivileges(currentTokenHandle);
+
         bool SeIncreaseQuotaPrivilegeAssigned = false;
         bool SeAssignPrimaryTokenPrivilegeAssigned = false;
         bool SeImpersonatePrivilegeAssigned = false;
+
         foreach (string[] s in privs)
         {
             string privilege = s[0];
@@ -1270,30 +1321,82 @@ Examples:
         else 
             if (SeImpersonatePrivilegeAssigned)
                 createProcessFunction = 1;
-        //if a create process function is forced, use it. It should be just for debug.
-        if (arguments.Length > 6 && arguments[6] != "")
-            createProcessFunction = Convert.ToInt32(arguments[6]);
+
         return createProcessFunction;
     }
-    
-    public static string RunasCsMain(string[] args){
-        string output="";
+
+    public static string RunasCsMain(string[] args)
+    {
+        string output = "";
         if (args.Length == 1 && HelpRequired(args[0]))
         {
-            DisplayHelp();
+            Console.Out.Write(help);
+            System.Environment.Exit(0);
         }
-        else
-        {
-            CheckArgs(args);
-            string username = args[0];
-            string password = args[1];
-            string cmd = args[2];
-            string domain = ParseDomain(args);
-            uint processTimeout = ParseProcessTimeout(args);
-            int logonType = ParseLogonType(args);
-            int createProcessFunction = ParseCreateProcessFunction(args);
-            output=RunasCs.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction);
+
+        List<string> positionals = new List<string>();
+        string username, password, cmd, domain;
+        username = password = cmd = domain = string.Empty;
+        string[] remote = null;
+        uint processTimeout = 12000;
+        int logonType = 3, createProcessFunction = DefaultCreateProcessFunction();
+        bool explicitTimeout = false;
+
+        try {
+            for(int ctr = 0; ctr < args.Length; ctr++) {
+                switch (args[ctr])
+                {
+
+                    case "-d":
+                    case "--domain":
+                        domain = args[++ctr];
+                        break;
+
+                    case "-t":
+                    case "--timeout":
+                        processTimeout = ValidateProcessTimeout(args[++ctr]);
+                        explicitTimeout = true;
+                        break;
+
+                    case "-l":
+                    case "--logon-type":
+                        logonType = ValidateLogonType(args[++ctr]);
+                        break;
+
+                    case "-f":
+                    case "--function":
+                        createProcessFunction = ValidateCreateProcessFunction(args[++ctr]);
+                        break;
+
+                    case "-r":
+                    case "--remote":
+                        remote = ValidateRemote(args[++ctr]);
+                        break;
+
+                    default:
+                        positionals.Add(args[ctr]);
+                        break;
+                }
+            }
+        } catch(System.IndexOutOfRangeException e) {
+            Console.Out.WriteLine("[-] RunasCs: Invalid arguments. Use --help for additional help.");
+            System.Environment.Exit(1);
         }
+
+        if( positionals.Count < 3 ) {
+            Console.Out.WriteLine("[-] RunasCs: Not enough arguments. 3 Arguments required. Use --help for additional help.");
+            System.Environment.Exit(1);
+        }
+
+        username = positionals[0];
+        password = positionals[1];
+        cmd = positionals[2];
+
+        if( remote != null && explicitTimeout == false ) {
+            processTimeput = 0;
+        }
+
+        output=RunasCs.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction);
         return output;
     }
 }
