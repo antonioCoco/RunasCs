@@ -1295,25 +1295,31 @@ Examples:
 
 ";
     
-    private static Dictionary<int,string> logonTypes= new Dictionary<int,string>()
+    // .NETv2 does not allow dict initialization with values. Therefore, we need a function :(
+    private static Dictionary<int,string> getLogonTypeDict()
     {
-        {2, "Interactive"},
-        {3, "Network"},
-        {4, "Batch"},
-        {5, "Service"},
-        {7, "Unlock"},
-        {8, "NetworkCleartext"},
-        {9, "NewCredentials"},
-        {10,"RemoteInteractive"},
-        {11,"CachedInteractive"}
-    };
+        Dictionary<int,string> logonTypes = new Dictionary<int,string>();
+        logonTypes.Add(2, "Interactive");
+        logonTypes.Add(3, "Network");
+        logonTypes.Add(4, "Batch");
+        logonTypes.Add(5, "Service");
+        logonTypes.Add(7, "Unlock");
+        logonTypes.Add(8, "NetworkCleartext");
+        logonTypes.Add(9, "NewCredentials");
+        logonTypes.Add(10,"RemoteInteractive");
+        logonTypes.Add(11,"CachedInteractive");
+        return logonTypes;
+    }
 
-    private static Dictionary<int,string> createProcessFunctions= new Dictionary<int,string>()
+    // .NETv2 does not allow dict initialization with values. Therefore, we need a function :(
+    private static Dictionary<int,string> getCreateProcessFunctionDict()
     {
-        {0, "CreateProcessAsUser"},
-        {1, "CreateProcessWithTokenW"},
-        {2, "CreateProcessWithLogonW"}
-    };
+        Dictionary<int,string> createProcessFunctions = new Dictionary<int,string>();
+        createProcessFunctions.Add(0, "CreateProcessAsUser");
+        createProcessFunctions.Add(1, "CreateProcessWithTokenW");
+        createProcessFunctions.Add(2, "CreateProcessWithLogonW");
+        return createProcessFunctions;
+    }
 
     private static bool HelpRequired(string param)
     {
@@ -1347,6 +1353,7 @@ Examples:
     private static int ValidateLogonType(string type)
     {
         int logonType = 3;
+        Dictionary<int,string> logonTypes = getLogonTypeDict();
 
         try {
             logonType = Convert.ToInt32(type);
@@ -1368,6 +1375,7 @@ Examples:
     private static int ValidateCreateProcessFunction(string function)
     {
         int createProcessFunction = 2;
+        Dictionary<int,string> createProcessFunctions = getCreateProcessFunctionDict();
         try {
             createProcessFunction = Convert.ToInt32(function);
             if( createProcessFunction < 0 || createProcessFunction > 2 ) {
