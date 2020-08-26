@@ -5,9 +5,17 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net.Sockets;
 
+public class RunasCsException : Exception
+{
+    private const string error_string = "[-] RunasCsException: ";
+
+    public RunasCsException(){}
+
+    public RunasCsException(string message) : base(error_string + message){}
+}
+
 public static class RunasCs
 {
-    private const string error_string = "[-] RunasCsException.";
     private const UInt16 SW_HIDE = 0;
     private const Int32 Startf_UseStdHandles = 0x00000100;
     private const int TokenType = 1; //primary token
@@ -206,7 +214,7 @@ public static class RunasCs
         tokenp.Luid = sebLuid;
         tokenp.Attributes = SE_PRIVILEGE_ENABLED;
         if(!AdjustTokenPrivileges(token, false, ref tokenp, 0, 0, 0)){
-            output += error_string + "\r\n[-] AdjustTokenPrivileges on privilege " + privilege + " failed with error code: " + Marshal.GetLastWin32Error();
+            throw new RunasCsException("AdjustTokenPrivileges on privilege " + privilege + " failed with error code: " + Marshal.GetLastWin32Error());
         }
         output += "\r\nAdjustTokenPrivileges on privilege " + privilege + " succeeded";
         return output;
@@ -286,15 +294,13 @@ public static class RunasCs
         try {
             port = Convert.ToInt32(remote[1]);
         } catch {
-            Console.Out.WriteLine("[-] RunasCs: Specified port is invalid: " + remote[1]);
-            System.Environment.Exit(-1);
+            throw new RunasCsException("Specified port is invalid: " + remote[1]);
         }
 
         WSAData data;
         if( WSAStartup(2 << 8 | 2, out data) != 0 ) {
             error = WSAGetLastError();
-            Console.Out.WriteLine(String.Format("[-] RunasCs: WSAStartup failed with error code: {0}", error));
-            System.Environment.Exit(-1);
+            throw new RunasCsException(String.Format("WSAStartup failed with error code: {0}", error));
         }
 
         IntPtr socket = IntPtr.Zero;
@@ -307,8 +313,7 @@ public static class RunasCs
 
         if( connect(socket, ref sockinfo, Marshal.SizeOf(sockinfo)) != 0 ) {
             error = WSAGetLastError();
-            Console.Out.WriteLine(String.Format("[-] RunasCs: WSAConnect failed with error code: {0}", error));
-            System.Environment.Exit(-1);
+            throw new RunasCsException(String.Format("WSAConnect failed with error code: {0}", error));
         }
 
         return socket;
@@ -418,17 +423,14 @@ public static class RunasCs
         
         if(processTimeout > 0){
             if (!CreateAnonymousPipeEveryoneAccess(ref hOutputReadTmp, ref hOutputWrite)){
-                output += error_string + "\r\n[-] CreatePipe failed with error code: " + Marshal.GetLastWin32Error();
-                return output;
+                throw new RunasCsException("CreatePipe failed with error code: " + Marshal.GetLastWin32Error());
             }
             //1998's code. Old but gold https://support.microsoft.com/en-us/help/190351/how-to-spawn-console-processes-with-redirected-standard-handles
             if (!DuplicateHandle(hCurrentProcess, hOutputWrite, hCurrentProcess,out hErrorWrite, 0, true, DUPLICATE_SAME_ACCESS)){
-                output += error_string + "\r\n[-] DuplicateHandle stderr write pipe failed with error code: " + Marshal.GetLastWin32Error();
-                return output;
+                throw new RunasCsException("DuplicateHandle stderr write pipe failed with error code: " + Marshal.GetLastWin32Error());
             }
             if (!DuplicateHandle(hCurrentProcess, hOutputReadTmp, hCurrentProcess, out hOutputRead, 0, false, DUPLICATE_SAME_ACCESS)){
-                output += error_string + "\r\n[-] DuplicateHandle stdout read pipe failed with error code: " + Marshal.GetLastWin32Error();
-                return output;
+                throw new RunasCsException("DuplicateHandle stdout read pipe failed with error code: " + Marshal.GetLastWin32Error());
             }
             CloseHandle(hOutputReadTmp);
             startupInfo.dwFlags = Startf_UseStdHandles;
@@ -450,8 +452,7 @@ public static class RunasCs
         if(createProcessFunction == 2){
             success = CreateProcessWithLogonW(username, domainName, password, (UInt32) 1, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
             if (success == false){
-                output += error_string + "\r\n[-] CreateProcessWithLogonW failed with " + Marshal.GetLastWin32Error();
-                return output;
+                throw new RunasCsException("CreateProcessWithLogonW failed with " + Marshal.GetLastWin32Error());
             }
         }
         else{
@@ -460,8 +461,7 @@ public static class RunasCs
             success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
             if(success == false)
             {
-                output += error_string + "\r\n[-] Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error();
-                return output;
+                throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
             }
 
             SECURITY_ATTRIBUTES sa  = new SECURITY_ATTRIBUTES();
@@ -471,8 +471,7 @@ public static class RunasCs
             success = DuplicateTokenEx(hToken, GENERIC_ALL, ref sa, SECURITY_IMPERSONATION_LEVEL.SecurityDelegation, TokenType, ref hTokenDuplicate);
             if(success == false)
             {
-                output += error_string + "\r\n[-] DuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error();
-                return output;
+                throw new RunasCsException("DuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error());
             }
 
             // obtain environmentBlock for desired user
@@ -493,16 +492,14 @@ public static class RunasCs
                 success = CreateProcessAsUser(hTokenDuplicate, processPath, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, null, ref startupInfo, out processInfo);
                 if(success == false)
                 {
-                    output += error_string + "\r\n[-] CreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error();
-                    return output;
+                    throw new RunasCsException("CreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error());
                 }
             }
             if(createProcessFunction == 1){
                 success = CreateProcessWithTokenW(hTokenDuplicate, 0, processPath, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, null, ref startupInfo, out processInfo);
                 if(success == false)
                 {
-                    output += error_string + "\r\n[-] CreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error();
-                    return output;
+                    throw new RunasCsException("CreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error());
                 }
             }
 
@@ -526,7 +523,7 @@ public static class RunasCs
         }
         CloseHandle(processInfo.process);
         CloseHandle(processInfo.thread);
-        stationDaclObj.CleanupHandles(0);        
+        stationDaclObj.CleanupHandles("");
         return output;
     }
     
@@ -778,9 +775,9 @@ public class WindowStationDACL{
             }
         }
         else{
-            Console.Out.Write("\r\nThe username " + fqan + " has not been found.\r\n");
-            Console.Out.Write("\r\nLookupAccountName failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            string error = "The username " + fqan + " has not been found.\r\n";
+            error += "[-] LookupAccountName failed with error code " + Marshal.GetLastWin32Error();
+            this.CleanupHandles(error);
         }
         if (err == 0)
         {
@@ -788,9 +785,9 @@ public class WindowStationDACL{
             Marshal.Copy(Sid, 0, userSid, (int)cbSid);
         }
         else{
-            Console.Out.Write("\r\nThe username " + fqan + " has not been found.\r\n");
-            Console.Out.Write("\r\nLookupAccountName failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            string error = "The username " + fqan + " has not been found.\r\n";
+            error += "[-] LookupAccountName failed with error code " + Marshal.GetLastWin32Error();
+            this.CleanupHandles(error);
         }
         return userSid;
     }
@@ -811,13 +808,11 @@ public class WindowStationDACL{
         IntPtr sidStartPtr = new IntPtr(pNewAcePtr.ToInt64() + offset);
         if (!CopySid((uint)GetLengthSid(this.userSid), sidStartPtr, this.userSid))
         {
-            Console.Out.Write("\r\nCopySid failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("CopySid failed with error code " + Marshal.GetLastWin32Error());
         }
         if (!AddAce(pDacl, ACL_REVISION, MAXDWORD, pNewAcePtr, aceSize))
         {
-            Console.Out.Write("\r\nAddAce failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("AddAce failed with error code " + Marshal.GetLastWin32Error());
         }
         Marshal.FreeHGlobal(pNewAcePtr);
     }
@@ -841,22 +836,19 @@ public class WindowStationDACL{
         {
             if (Marshal.GetLastWin32Error() != ERROR_INSUFFICIENT_BUFFER)
             {
-                Console.Out.Write("\r\nGetUserObjectSecurity 1 size failed with error code " + Marshal.GetLastWin32Error());
-                this.CleanupHandles(-1);
+                this.CleanupHandles("GetUserObjectSecurity 1 size failed with error code " + Marshal.GetLastWin32Error());
             }
         }
         pSd = Marshal.AllocHGlobal((int)cbSd);
         // Obtain the security descriptor for the desktop object.
         if (!GetUserObjectSecurity(this.hWinsta, ref si, pSd, cbSd, out cbSd))
         {
-            Console.Out.Write("\r\nGetUserObjectSecurity 2 failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("GetUserObjectSecurity 2 failed with error code " + Marshal.GetLastWin32Error());
         }
         // Get the DACL from the security descriptor.
         if (!GetSecurityDescriptorDacl(pSd, out fDaclPresent, ref pDacl, out fDaclExist))
         {
-            Console.Out.Write("\r\nGetSecurityDescriptorDacl failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("GetSecurityDescriptorDacl failed with error code " + Marshal.GetLastWin32Error());
         }
         // Get the size information of the DACL.
         if (pDacl == IntPtr.Zero)
@@ -867,8 +859,7 @@ public class WindowStationDACL{
         {
             if (!GetAclInformation(pDacl, ref aclSizeInfo, (uint)Marshal.SizeOf(typeof(ACL_SIZE_INFORMATION)), ACL_INFORMATION_CLASS.AclSizeInformation))
             {
-                Console.Out.Write("\r\nGetAclInformation failed with error code " + Marshal.GetLastWin32Error());
-                this.CleanupHandles(-1);
+                this.CleanupHandles("GetAclInformation failed with error code " + Marshal.GetLastWin32Error());
             }
             cbDacl = aclSizeInfo.AclBytesInUse;
         }
@@ -878,8 +869,7 @@ public class WindowStationDACL{
         // Initialize the new security descriptor.
         if (!InitializeSecurityDescriptor(pNewSd, SECURITY_DESCRIPTOR_REVISION))
         {
-            Console.Out.Write("\r\nInitializeSecurityDescriptor failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("InitializeSecurityDescriptor failed with error code " + Marshal.GetLastWin32Error());
         }
         
         // Compute the size of a DACL to be added to the new security descriptor.
@@ -894,8 +884,7 @@ public class WindowStationDACL{
         // Initialize the new DACL.
         if (!InitializeAcl(pNewDacl, cbNewDacl, ACL_REVISION))
         {
-            Console.Out.Write("\r\nInitializeAcl failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("InitializeAcl failed with error code " + Marshal.GetLastWin32Error());
         }
         
         // If the original DACL is present, copy it to the new DACL.
@@ -908,15 +897,13 @@ public class WindowStationDACL{
                 // Get an ACE.
                 if (!GetAce(pDacl, dwIndex, out pTempAce))
                 {
-                    Console.Out.Write("\r\nGetAce failed with error code " + Marshal.GetLastWin32Error());
-                    this.CleanupHandles(-1);
+                    this.CleanupHandles("GetAce failed with error code " + Marshal.GetLastWin32Error());
                 }
                 ACE_HEADER pTempAceStruct = (ACE_HEADER)Marshal.PtrToStructure(pTempAce, typeof(ACE_HEADER));
                 // Add the ACE to the new ACL.
                 if (!AddAce(pNewDacl, ACL_REVISION, MAXDWORD, pTempAce, (uint)pTempAceStruct.AceSize))
                 {
-                    Console.Out.Write("\r\nAddAce failed with error code " + Marshal.GetLastWin32Error());
-                    this.CleanupHandles(-1);
+                    this.CleanupHandles("AddAce failed with error code " + Marshal.GetLastWin32Error());
                 }
             }
         }
@@ -926,14 +913,12 @@ public class WindowStationDACL{
         // Assign the new DACL to the new security descriptor.
         if (!SetSecurityDescriptorDacl(pNewSd, true, pNewDacl, false))
         {
-            Console.Out.Write("\r\nSetSecurityDescriptorDacl failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("SetSecurityDescriptorDacl failed with error code " + Marshal.GetLastWin32Error());
         }
         //  Set the new security descriptor for the desktop object.
         if (!SetUserObjectSecurity(this.hWinsta, ref si, pNewSd))
         {
-            Console.Out.Write("\r\nSetUserObjectSecurity failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("SetUserObjectSecurity failed with error code " + Marshal.GetLastWin32Error());
         }
         
         Marshal.FreeHGlobal(pSd);
@@ -960,22 +945,19 @@ public class WindowStationDACL{
         {
             if (Marshal.GetLastWin32Error() != ERROR_INSUFFICIENT_BUFFER)
             {
-                Console.Out.Write("\r\nGetUserObjectSecurity 1 size failed with error code " + Marshal.GetLastWin32Error());
-                this.CleanupHandles(-1);
+                this.CleanupHandles("GetUserObjectSecurity 1 size failed with error code " + Marshal.GetLastWin32Error());
             }
         }
         pSd = Marshal.AllocHGlobal((int)cbSd);
         // Obtain the security descriptor for the desktop object.
         if (!GetUserObjectSecurity(this.hDesktop, ref si, pSd, cbSd, out cbSd))
         {
-            Console.Out.Write("\r\nGetUserObjectSecurity 2 failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("GetUserObjectSecurity 2 failed with error code " + Marshal.GetLastWin32Error());
         }
         // Get the DACL from the security descriptor.
         if (!GetSecurityDescriptorDacl(pSd, out fDaclPresent, ref pDacl, out fDaclExist))
         {
-            Console.Out.Write("\r\nGetSecurityDescriptorDacl failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("GetSecurityDescriptorDacl failed with error code " + Marshal.GetLastWin32Error());
         }
         // Get the size information of the DACL.
         if (pDacl == IntPtr.Zero)
@@ -986,8 +968,7 @@ public class WindowStationDACL{
         {
             if (!GetAclInformation(pDacl, ref aclSizeInfo, (uint)Marshal.SizeOf(typeof(ACL_SIZE_INFORMATION)), ACL_INFORMATION_CLASS.AclSizeInformation))
             {
-                Console.Out.Write("\r\nGetAclInformation failed with error code " + Marshal.GetLastWin32Error());
-                this.CleanupHandles(-1);
+                this.CleanupHandles("GetAclInformation failed with error code " + Marshal.GetLastWin32Error());
             }
             cbDacl = aclSizeInfo.AclBytesInUse;
         }
@@ -997,8 +978,7 @@ public class WindowStationDACL{
         // Initialize the new security descriptor.
         if (!InitializeSecurityDescriptor(pNewSd, SECURITY_DESCRIPTOR_REVISION))
         {
-            Console.Out.Write("\r\nInitializeSecurityDescriptor failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("InitializeSecurityDescriptor failed with error code " + Marshal.GetLastWin32Error());
         }
         
         // Compute the size of a DACL to be added to the new security descriptor.
@@ -1013,8 +993,7 @@ public class WindowStationDACL{
         // Initialize the new DACL.
         if (!InitializeAcl(pNewDacl, cbNewDacl, ACL_REVISION))
         {
-            Console.Out.Write("\r\nInitializeAcl failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("InitializeAcl failed with error code " + Marshal.GetLastWin32Error());
         }
         
         // If the original DACL is present, copy it to the new DACL.
@@ -1027,15 +1006,13 @@ public class WindowStationDACL{
                 // Get an ACE.
                 if (!GetAce(pDacl, dwIndex, out pTempAce))
                 {
-                    Console.Out.Write("\r\nGetAce failed with error code " + Marshal.GetLastWin32Error());
-                    this.CleanupHandles(-1);
+                    this.CleanupHandles("GetAce failed with error code " + Marshal.GetLastWin32Error());
                 }
                 ACE_HEADER pTempAceStruct = (ACE_HEADER)Marshal.PtrToStructure(pTempAce, typeof(ACE_HEADER));
                 // Add the ACE to the new ACL.
                 if (!AddAce(pNewDacl, ACL_REVISION, MAXDWORD, pTempAce, (uint)pTempAceStruct.AceSize))
                 {
-                    Console.Out.Write("\r\nAddAce failed with error code " + Marshal.GetLastWin32Error());
-                    this.CleanupHandles(-1);
+                    this.CleanupHandles("AddAce failed with error code " + Marshal.GetLastWin32Error());
                 }
             }
         }
@@ -1043,21 +1020,18 @@ public class WindowStationDACL{
         // Add a new ACE to the new DACL.
         if (!AddAccessAllowedAce(pNewDacl, ACL_REVISION, ACCESS_MASK.DESKTOP_ALL, this.userSid))
         {
-            Console.Out.Write("\r\nAddAccessAllowedAce failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("AddAccessAllowedAce failed with error code " + Marshal.GetLastWin32Error());
         }
         
         // Assign the new DACL to the new security descriptor.
         if (!SetSecurityDescriptorDacl(pNewSd, true, pNewDacl, false))
         {
-            Console.Out.Write("\r\nSetSecurityDescriptorDacl failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("SetSecurityDescriptorDacl failed with error code " + Marshal.GetLastWin32Error());
         }
         //  Set the new security descriptor for the desktop object.
         if (!SetUserObjectSecurity(this.hDesktop, ref si, pNewSd))
         {
-            Console.Out.Write("\r\nSetUserObjectSecurity failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("SetUserObjectSecurity failed with error code " + Marshal.GetLastWin32Error());
         }
         
         Marshal.FreeHGlobal(pSd);
@@ -1074,37 +1048,31 @@ public class WindowStationDACL{
         IntPtr hWinstaSave = GetProcessWindowStation();
         if (hWinstaSave == IntPtr.Zero)
         {
-            Console.Out.Write("\r\nGetProcessWindowStation failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("GetProcessWindowStation failed with error code " + Marshal.GetLastWin32Error());
         }
         if(!GetUserObjectInformation(hWinstaSave, UOI_NAME, stationNameBytes, 256, out lengthNeeded)){
-            Console.Out.Write("\r\nGetUserObjectInformation failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("GetUserObjectInformation failed with error code " + Marshal.GetLastWin32Error());
         }
         stationName=Encoding.Default.GetString(stationNameBytes).Substring(0, (int)lengthNeeded-1);
 
         this.hWinsta = OpenWindowStation(stationName, false, ACCESS_MASK.READ_CONTROL | ACCESS_MASK.WRITE_DAC);
         if (this.hWinsta == IntPtr.Zero)
         {
-            Console.Out.Write("\r\nOpenWindowStation failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("OpenWindowStation failed with error code " + Marshal.GetLastWin32Error());
         }
         
         if (!SetProcessWindowStation(this.hWinsta))
         {
-            Console.Out.Write("\r\nSetProcessWindowStation hWinsta failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("SetProcessWindowStation hWinsta failed with error code " + Marshal.GetLastWin32Error());
         }
         this.hDesktop = OpenDesktop("Default", 0, false, ACCESS_MASK.READ_CONTROL | ACCESS_MASK.WRITE_DAC | ACCESS_MASK.DESKTOP_WRITEOBJECTS | ACCESS_MASK.DESKTOP_READOBJECTS);
         if (!SetProcessWindowStation(hWinstaSave))
         {
-            Console.Out.Write("\r\nSetProcessWindowStation hWinstaSave failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("SetProcessWindowStation hWinstaSave failed with error code " + Marshal.GetLastWin32Error());
         }
         if (this.hWinsta == IntPtr.Zero)
         {
-            Console.Out.Write("\r\nOpenDesktop failed with error code " + Marshal.GetLastWin32Error());
-            this.CleanupHandles(-1);
+            this.CleanupHandles("OpenDesktop failed with error code " + Marshal.GetLastWin32Error());
         }
         this.userSid = GetUserSid(domain, username);
         AddAceToWindowStation();
@@ -1114,12 +1082,12 @@ public class WindowStationDACL{
     }
     
     //Cleanup the handle after the spawned process run as another user has exited.
-    public void CleanupHandles(int exit){
+    public void CleanupHandles(string error){
         if(this.hWinsta != IntPtr.Zero) CloseWindowStation(this.hWinsta);
         if(this.hDesktop != IntPtr.Zero) CloseDesktop(this.hDesktop);
         if(this.userSid != IntPtr.Zero) FreeSid(this.userSid);
-        if(exit < 0)
-            System.Environment.Exit(exit);
+        if(error != "")
+            throw new RunasCsException(error);
     }
    
 }
@@ -1193,8 +1161,7 @@ public static class Token{
         IntPtr TokenInformation = Marshal.AllocHGlobal((int)TokenInfLength) ;
         Result = GetTokenInformation(tHandle, TOKEN_INFORMATION_CLASS.TokenPrivileges, TokenInformation, TokenInfLength, out TokenInfLength) ; 
         if (Result == false){
-            Console.Out.Write("\r\nGetTokenInformation failed with error code " + Marshal.GetLastWin32Error());
-            System.Environment.Exit(-1);
+            throw new RunasCsException("GetTokenInformation failed with error code " + Marshal.GetLastWin32Error());
         }
         TOKEN_PRIVILEGES TokenPrivileges = ( TOKEN_PRIVILEGES )Marshal.PtrToStructure( TokenInformation , typeof( TOKEN_PRIVILEGES ) ) ;
         for(int i=0;i<TokenPrivileges.PrivilegeCount;i++){
@@ -1209,8 +1176,7 @@ public static class Token{
             sb.EnsureCapacity(luidNameLen + 1);
             Result = LookupPrivilegeName(null, ptrLuid, sb, ref luidNameLen);// call again to get the name
             if (Result == false){
-                Console.Out.Write("\r\nLookupPrivilegeName failed with error code " + Marshal.GetLastWin32Error());
-                System.Environment.Exit(-1);
+                throw new RunasCsException("LookupPrivilegeName failed with error code " + Marshal.GetLastWin32Error());
             }
             privilegeStatus[0]=sb.ToString();
             privilegeStatus[1]=convertAttributeToString(TokenPrivileges.Privileges[i].Attributes);
@@ -1315,8 +1281,7 @@ Examples:
             processTimeout = Convert.ToUInt32(timeout);
         }
         catch {
-            Console.Out.WriteLine("[-] RunasCs: Invalid process_timeout value: " + timeout);
-            System.Environment.Exit(-1);
+            throw new RunasCsException("Invalid process_timeout value: " + timeout);
         }
         return processTimeout;
     }
@@ -1325,9 +1290,9 @@ Examples:
     {
         string[] split = remote.Split(':');
         if( split.Length != 2 ) {
-            Console.Out.WriteLine("[-] RunasCs: Invalid remote value: " + remote);
-            Console.Out.WriteLine("[-] Expected format: 'host:port'");
-            System.Environment.Exit(-1);
+            string error = "Invalid remote value: " + remote + "\r\n";
+            error += "[-] Expected format: 'host:port'";
+            throw new RunasCsException(error);
         }
         return split;
     }
@@ -1344,12 +1309,12 @@ Examples:
             }
         }
         catch {
-            Console.Out.WriteLine("[-] RunasCs: Invalid logon_type value: " + type);
-            Console.Out.WriteLine("[-] Allowed values are:");
+            string error = "Invalid logon_type value: " + type + "\r\n";
+            error += "[-] Allowed values are:\r\n";
             foreach(KeyValuePair<int,string> item in logonTypes) {
-                Console.Out.WriteLine(String.Format("[-]     {0}\t{1}", item.Key, item.Value));
+                error += String.Format("[-]     {0}\t{1}\r\n", item.Key, item.Value);
             }
-            System.Environment.Exit(-1);
+            throw new RunasCsException(error);
         }
         return logonType;
     }
@@ -1365,12 +1330,12 @@ Examples:
             }
         }
         catch {
-            Console.Out.WriteLine("[-] RunasCs: Invalid createProcess function: " + function);
-            Console.Out.WriteLine("[-] Allowed values are:");
+            string error = "Invalid createProcess function: " + function + "\r\n";
+            error += "[-] Allowed values are:\r\n";
             foreach(KeyValuePair<int,string> item in createProcessFunctions) {
-                Console.Out.WriteLine(String.Format("[-]     {0}\t{1}", item.Key, item.Value));
+                error += String.Format("[-]     {0}\t{1}\r\n", item.Key, item.Value);
             }
-            System.Environment.Exit(-1);
+            throw new RunasCsException(error);
         }
         return createProcessFunction;
     }
@@ -1412,7 +1377,7 @@ Examples:
         if (args.Length == 1 && HelpRequired(args[0]))
         {
             Console.Out.Write(help);
-            System.Environment.Exit(0);
+            return "";
         }
 
         List<string> positionals = new List<string>();
@@ -1458,13 +1423,13 @@ Examples:
                 }
             }
         } catch(System.IndexOutOfRangeException) {
-            Console.Out.WriteLine("[-] RunasCs: Invalid arguments. Use --help for additional help.");
-            System.Environment.Exit(1);
+            return "[-] Invalid arguments. Use --help for additional help.";
+        } catch(RunasCsException e) {
+            return String.Format("{0}", e.Message);
         }
 
         if( positionals.Count < 3 ) {
-            Console.Out.WriteLine("[-] RunasCs: Not enough arguments. 3 Arguments required. Use --help for additional help.");
-            System.Environment.Exit(1);
+            return "[-] Not enough arguments. 3 Arguments required. Use --help for additional help.";
         }
 
         username = positionals[0];
@@ -1475,12 +1440,18 @@ Examples:
             processTimeout = 0;
         }
 
-        output=RunasCs.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction, remote);
+        try {
+            output = RunasCs.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction, remote);
+        } catch(RunasCsException e) {
+            output = String.Format("{0}", e.Message);
+        }
+
         return output;
     }
 }
 
 class MainClass{
+
     static void Main(string[] args)
     {
         Console.Out.Write(RunasCsMainClass.RunasCsMain(args));
