@@ -7,7 +7,7 @@ using System.Net.Sockets;
 
 public static class RunasCs
 {
-    private const string error_string = "[-] RunasCsException";
+    private const string error_string = "[-] RunasCsException.";
     private const UInt16 SW_HIDE = 0;
     private const Int32 Startf_UseStdHandles = 0x00000100;
     private const int TokenType = 1; //primary token
@@ -206,7 +206,7 @@ public static class RunasCs
         tokenp.Luid = sebLuid;
         tokenp.Attributes = SE_PRIVILEGE_ENABLED;
         if(!AdjustTokenPrivileges(token, false, ref tokenp, 0, 0, 0)){
-            output += error_string + "\r\nAdjustTokenPrivileges on privilege " + privilege + " failed with error code: " + Marshal.GetLastWin32Error();
+            output += error_string + "\r\n[-] AdjustTokenPrivileges on privilege " + privilege + " failed with error code: " + Marshal.GetLastWin32Error();
         }
         output += "\r\nAdjustTokenPrivileges on privilege " + privilege + " succeeded";
         return output;
@@ -418,16 +418,16 @@ public static class RunasCs
         
         if(processTimeout > 0){
             if (!CreateAnonymousPipeEveryoneAccess(ref hOutputReadTmp, ref hOutputWrite)){
-                output += error_string + "\r\nCreatePipe failed with error code: " + Marshal.GetLastWin32Error();
+                output += error_string + "\r\n[-] CreatePipe failed with error code: " + Marshal.GetLastWin32Error();
                 return output;
             }
             //1998's code. Old but gold https://support.microsoft.com/en-us/help/190351/how-to-spawn-console-processes-with-redirected-standard-handles
             if (!DuplicateHandle(hCurrentProcess, hOutputWrite, hCurrentProcess,out hErrorWrite, 0, true, DUPLICATE_SAME_ACCESS)){
-                output += error_string + "\r\nDuplicateHandle stderr write pipe failed with error code: " + Marshal.GetLastWin32Error();
+                output += error_string + "\r\n[-] DuplicateHandle stderr write pipe failed with error code: " + Marshal.GetLastWin32Error();
                 return output;
             }
             if (!DuplicateHandle(hCurrentProcess, hOutputReadTmp, hCurrentProcess, out hOutputRead, 0, false, DUPLICATE_SAME_ACCESS)){
-                output += error_string + "\r\nDuplicateHandle stdout read pipe failed with error code: " + Marshal.GetLastWin32Error();
+                output += error_string + "\r\n[-] DuplicateHandle stdout read pipe failed with error code: " + Marshal.GetLastWin32Error();
                 return output;
             }
             CloseHandle(hOutputReadTmp);
@@ -450,7 +450,7 @@ public static class RunasCs
         if(createProcessFunction == 2){
             success = CreateProcessWithLogonW(username, domainName, password, (UInt32) 1, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
             if (success == false){
-                output += error_string + "\r\nCreateProcessWithLogonW failed with " + Marshal.GetLastWin32Error();
+                output += error_string + "\r\n[-] CreateProcessWithLogonW failed with " + Marshal.GetLastWin32Error();
                 return output;
             }
         }
@@ -460,7 +460,7 @@ public static class RunasCs
             success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
             if(success == false)
             {
-                output += error_string + "\r\nWrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error();
+                output += error_string + "\r\n[-] Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error();
                 return output;
             }
 
@@ -471,7 +471,7 @@ public static class RunasCs
             success = DuplicateTokenEx(hToken, GENERIC_ALL, ref sa, SECURITY_IMPERSONATION_LEVEL.SecurityDelegation, TokenType, ref hTokenDuplicate);
             if(success == false)
             {
-                output += error_string + "\r\nDuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error();
+                output += error_string + "\r\n[-] DuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error();
                 return output;
             }
 
@@ -493,7 +493,7 @@ public static class RunasCs
                 success = CreateProcessAsUser(hTokenDuplicate, processPath, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, null, ref startupInfo, out processInfo);
                 if(success == false)
                 {
-                    output += error_string + "\r\nCreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error();
+                    output += error_string + "\r\n[-] CreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error();
                     return output;
                 }
             }
@@ -501,7 +501,7 @@ public static class RunasCs
                 success = CreateProcessWithTokenW(hTokenDuplicate, 0, processPath, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, null, ref startupInfo, out processInfo);
                 if(success == false)
                 {
-                    output += error_string + "\r\nCreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error();
+                    output += error_string + "\r\n[-] CreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error();
                     return output;
                 }
             }
@@ -520,9 +520,9 @@ public static class RunasCs
             CloseHandle(hOutputRead);
         }
         else{
-            output += "\r\nRunning in session " + sessionId.ToString() + " with process function " + GetProcessFunction(createProcessFunction) + "\r\n";
-            output += "\r\nUsing Station\\Desktop: " + desktopName + "\r\n";
-            output += "\r\nAsync process '" + commandLine + "' with pid " + processInfo.processId + " created and left in background.\r\n";
+            output += "[+] Running in session " + sessionId.ToString() + " with process function " + GetProcessFunction(createProcessFunction) + "\r\n";
+            output += "[+] Using Station\\Desktop: " + desktopName + "\r\n";
+            output += "[+] Async process '" + commandLine + "' with pid " + processInfo.processId + " created and left in background.\r\n";
         }
         CloseHandle(processInfo.process);
         CloseHandle(processInfo.thread);
@@ -1227,7 +1227,7 @@ public static class RunasCsMainClass
 RunasCs v1.2 - @splinter_code
 
 Usage:
-    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t timeout]
+    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout]
 
 Description:
     RunasCs is an utility to run specific processes under a different user account
@@ -1245,10 +1245,13 @@ Optional arguments:
     -d, --domain domain
                             domain of the user, if in a domain. 
                             Default: """"
-    -f, --function int
+    -f, --function create_process_function
                             CreateProcess function to use. When not specified
                             RunasCs determines an appropriate CreateProcess
                             function automatucally according to your privileges.
+                            0 - CreateProcessAsUserA
+                            1 - CreateProcessWithTokenW
+                            2 - CreateProcessWithLogonW
     -l, --logon-type logon_type
                             the logon type for the spawned process.
                             Default: ""3""
@@ -1256,14 +1259,11 @@ Optional arguments:
                             redirect stdin, stdout and stderr to a remote host.
                             Using this options sets the process timeout to 0.
     -t, --timeout process_timeout
-                            the waiting time (in ms) to use in
-                            the WaitForSingleObject() function.
-                            This will halt the process until the spawned
-                            process ends and sent the output back to the caller.
-                            If you set 0 an async process will be
-                            created and no output will be retrieved.
-                            If this parameter is set to 0 it won't be
-                            used cmd.exe to spawn the process.
+                            the waiting time (in ms) for the created process.
+                            This will halt RunasCs until the spawned process
+                            ends and sent the output back to the caller.
+                            If you set 0 no output will be retrieved and cmd.exe
+                            won't be used to spawn the process.
                             Default: ""120000""
 
 Examples:
