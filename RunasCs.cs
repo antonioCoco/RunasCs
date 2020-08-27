@@ -19,13 +19,13 @@ public static class RunasCs
     private const UInt16 SW_HIDE = 0;
     private const Int32 Startf_UseStdHandles = 0x00000100;
     private const int TokenType = 1; //primary token
-    private const uint GENERIC_ALL = 0x10000000;
     private const int LOGON32_PROVIDER_DEFAULT = 0; 
+    private const int BUFFER_SIZE_PIPE = 1048576;
     private const uint CREATE_NO_WINDOW = 0x08000000;
+    private const uint GENERIC_ALL = 0x10000000;
     private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
-    private const int BUFFER_SIZE_PIPE = 1048576;
     
     [StructLayout(LayoutKind.Sequential)]
     private struct LUID 
@@ -155,6 +155,9 @@ public static class RunasCs
     
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe, ref SECURITY_ATTRIBUTES lpPipeAttributes, uint nSize);
+
+    [DllImport("kernel32.dll")]
+    static extern bool SetNamedPipeHandleState(IntPtr hNamedPipe, ref UInt32 lpMode, IntPtr lpMaxCollectionCount, IntPtr lpCollectDataTimeout);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool ReadFile(IntPtr hFile, [Out] byte[] lpBuffer, uint nNumberOfBytesToRead, out uint lpNumberOfBytesRead, IntPtr lpOverlapped);
@@ -422,17 +425,23 @@ public static class RunasCs
         WindowStationDACL stationDaclObj = new WindowStationDACL();
         
         if(processTimeout > 0){
-            if (!CreateAnonymousPipeEveryoneAccess(ref hOutputReadTmp, ref hOutputWrite)){
+            if(!CreateAnonymousPipeEveryoneAccess(ref hOutputReadTmp, ref hOutputWrite)) {
                 throw new RunasCsException("CreatePipe failed with error code: " + Marshal.GetLastWin32Error());
             }
             //1998's code. Old but gold https://support.microsoft.com/en-us/help/190351/how-to-spawn-console-processes-with-redirected-standard-handles
-            if (!DuplicateHandle(hCurrentProcess, hOutputWrite, hCurrentProcess,out hErrorWrite, 0, true, DUPLICATE_SAME_ACCESS)){
+            if(!DuplicateHandle(hCurrentProcess, hOutputWrite, hCurrentProcess,out hErrorWrite, 0, true, DUPLICATE_SAME_ACCESS)) {
                 throw new RunasCsException("DuplicateHandle stderr write pipe failed with error code: " + Marshal.GetLastWin32Error());
             }
-            if (!DuplicateHandle(hCurrentProcess, hOutputReadTmp, hCurrentProcess, out hOutputRead, 0, false, DUPLICATE_SAME_ACCESS)){
+            if(!DuplicateHandle(hCurrentProcess, hOutputReadTmp, hCurrentProcess, out hOutputRead, 0, false, DUPLICATE_SAME_ACCESS)) {
                 throw new RunasCsException("DuplicateHandle stdout read pipe failed with error code: " + Marshal.GetLastWin32Error());
             }
+
             CloseHandle(hOutputReadTmp);
+            UInt32 PIPE_NOWAIT = 0x00000001;
+            if(!SetNamedPipeHandleState(hOutputRead, ref PIPE_NOWAIT, IntPtr.Zero, IntPtr.Zero)) {
+                throw new RunasCsException("SetNamedPipeHandleState failed with error code: " + Marshal.GetLastWin32Error());
+            }
+
             startupInfo.dwFlags = Startf_UseStdHandles;
             startupInfo.hStdOutput = (IntPtr)hOutputWrite;
             startupInfo.hStdError = (IntPtr)hErrorWrite;
