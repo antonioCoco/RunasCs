@@ -348,6 +348,8 @@ public class RunasCs
     {
     // EnvironmentBlock format: Unicode-Str\0Unicode-Str\0...Unicode-Str\0\0.
         int count = 0;
+        if(unicodeStrIntPtr == IntPtr.Zero)
+            return count;
         while (true)
         {
             string str = Marshal.PtrToStringUni(unicodeStrIntPtr);
