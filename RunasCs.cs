@@ -1269,7 +1269,7 @@ public static class Token{
 public static class RunasCsMainClass
 {
     private static string help = @"
-RunasCs v1.2 - @splinter_code
+RunasCs v1.3 - @splinter_code
 
 Usage:
     RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout]
