@@ -20,6 +20,7 @@ public class RunasCs
     private const Int32 Startf_UseStdHandles = 0x00000100;
     private const int TokenType = 1; //primary token
     private const int LOGON32_PROVIDER_DEFAULT = 0; 
+    private const int LOGON32_PROVIDER_WINNT50 = 3;
     private const int BUFFER_SIZE_PIPE = 1048576;
     private const uint CREATE_NO_WINDOW = 0x08000000;
     private const uint GENERIC_ALL = 0x10000000;
@@ -514,7 +515,10 @@ public class RunasCs
 
             IntPtr hToken = new IntPtr(0);
             IntPtr hTokenDuplicate = new IntPtr(0);
-            success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
+            if(logonType == 9)
+                success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_WINNT50, ref hToken);
+            else
+                success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
             if(success == false)
             {
                 throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
