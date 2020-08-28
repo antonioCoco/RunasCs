@@ -353,7 +353,6 @@ public class RunasCs
         success = ImpersonateLoggedOnUser(hToken);
         if(success == false) {
             warning = "[*] Warning: ImpersonateLoggedOnUser failed with error code: " + Marshal.GetLastWin32Error();
-            RevertToSelf();
             return false;
         }
 
