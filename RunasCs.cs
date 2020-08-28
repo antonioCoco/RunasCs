@@ -14,7 +14,7 @@ public class RunasCsException : Exception
     public RunasCsException(string message) : base(error_string + message){}
 }
 
-public static class RunasCs
+public class RunasCs
 {
     private const UInt16 SW_HIDE = 0;
     private const Int32 Startf_UseStdHandles = 0x00000100;
@@ -27,12 +27,22 @@ public static class RunasCs
     private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
 
-    private static IntPtr hOutputReadTmp = new IntPtr(0);
-    private static IntPtr hOutputRead = new IntPtr(0);
-    private static IntPtr hOutputWrite = new IntPtr(0);
-    private static IntPtr hErrorWrite = new IntPtr(0);
-    private static IntPtr socket = new IntPtr(0);
-    private static WindowStationDACL stationDaclObj = null;
+    private IntPtr socket;
+    private IntPtr hErrorWrite;
+    private IntPtr hOutputRead;
+    private IntPtr hOutputWrite;
+    private IntPtr hOutputReadTmp;
+    private WindowStationDACL stationDaclObj;
+
+    public RunasCs()
+    {
+        this.hOutputReadTmp = new IntPtr(0);
+        this.hOutputRead = new IntPtr(0);
+        this.hOutputWrite = new IntPtr(0);
+        this.hErrorWrite = new IntPtr(0);
+        this.socket = new IntPtr(0);
+        this.stationDaclObj = null;
+    }
     
     [StructLayout(LayoutKind.Sequential)]
     private struct LUID 
@@ -410,16 +420,23 @@ public static class RunasCs
         return true;
     }
 
-    public static void CleanupHandles(){
-        if(hOutputReadTmp != IntPtr.Zero) CloseHandle(hOutputReadTmp);
-        if(hOutputRead != IntPtr.Zero) CloseHandle(hOutputRead);
-        if(hOutputWrite != IntPtr.Zero) CloseHandle(hOutputWrite);
-        if(hErrorWrite != IntPtr.Zero) CloseHandle(hErrorWrite);
-        if(socket != IntPtr.Zero) closesocket(socket);
-        if(stationDaclObj != null) stationDaclObj.CleanupHandles();
+    public void CleanupHandles()
+    {
+        if(this.hOutputReadTmp != IntPtr.Zero) CloseHandle(this.hOutputReadTmp);
+        if(this.hOutputRead != IntPtr.Zero) CloseHandle(this.hOutputRead);
+        if(this.hOutputWrite != IntPtr.Zero) CloseHandle(this.hOutputWrite);
+        if(this.hErrorWrite != IntPtr.Zero) CloseHandle(this.hErrorWrite);
+        if(this.socket != IntPtr.Zero) closesocket(this.socket);
+        if(this.stationDaclObj != null) this.stationDaclObj.CleanupHandles();
+        this.hOutputReadTmp = IntPtr.Zero;
+        this.hOutputRead = IntPtr.Zero;
+        this.hOutputWrite = IntPtr.Zero;
+        this.hErrorWrite = IntPtr.Zero;
+        this.socket = IntPtr.Zero;
+        this.stationDaclObj = null;
     }
 
-    public static string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction, string[] remote)
+    public string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction, string[] remote)
     /*
         int createProcessFunction:
             0: CreateProcessAsUser();
@@ -440,48 +457,48 @@ public static class RunasCs
         startupInfo.cb = Marshal.SizeOf(startupInfo);
         startupInfo.lpReserved = null;
 
-        stationDaclObj = new WindowStationDACL();
+        this.stationDaclObj = new WindowStationDACL();
         ProcessInformation processInfo = new ProcessInformation();
 
         if(processTimeout > 0) {
-            if(!CreateAnonymousPipeEveryoneAccess(ref hOutputReadTmp, ref hOutputWrite)) {
+            if(!CreateAnonymousPipeEveryoneAccess(ref this.hOutputReadTmp, ref this.hOutputWrite)) {
                 throw new RunasCsException("CreatePipe failed with error code: " + Marshal.GetLastWin32Error());
             }
             //1998's code. Old but gold https://support.microsoft.com/en-us/help/190351/how-to-spawn-console-processes-with-redirected-standard-handles
-            if(!DuplicateHandle(hCurrentProcess, hOutputWrite, hCurrentProcess,out hErrorWrite, 0, true, DUPLICATE_SAME_ACCESS)) {
+            if(!DuplicateHandle(hCurrentProcess, this.hOutputWrite, hCurrentProcess, out this.hErrorWrite, 0, true, DUPLICATE_SAME_ACCESS)) {
                 throw new RunasCsException("DuplicateHandle stderr write pipe failed with error code: " + Marshal.GetLastWin32Error());
             }
-            if(!DuplicateHandle(hCurrentProcess, hOutputReadTmp, hCurrentProcess, out hOutputRead, 0, false, DUPLICATE_SAME_ACCESS)) {
+            if(!DuplicateHandle(hCurrentProcess, this.hOutputReadTmp, hCurrentProcess, out this.hOutputRead, 0, false, DUPLICATE_SAME_ACCESS)) {
                 throw new RunasCsException("DuplicateHandle stdout read pipe failed with error code: " + Marshal.GetLastWin32Error());
             }
 
-            CloseHandle(hOutputReadTmp);
+            CloseHandle(this.hOutputReadTmp);
             UInt32 PIPE_NOWAIT = 0x00000001;
-            if(!SetNamedPipeHandleState(hOutputRead, ref PIPE_NOWAIT, IntPtr.Zero, IntPtr.Zero)) {
+            if(!SetNamedPipeHandleState(this.hOutputRead, ref PIPE_NOWAIT, IntPtr.Zero, IntPtr.Zero)) {
                 throw new RunasCsException("SetNamedPipeHandleState failed with error code: " + Marshal.GetLastWin32Error());
             }
 
             startupInfo.dwFlags = Startf_UseStdHandles;
-            startupInfo.hStdOutput = (IntPtr)hOutputWrite;
-            startupInfo.hStdError = (IntPtr)hErrorWrite;
+            startupInfo.hStdOutput = this.hOutputWrite;
+            startupInfo.hStdError = this.hErrorWrite;
             processPath = Environment.GetEnvironmentVariable("ComSpec");
             commandLine = "/c " + cmd;
 
         } else if( remote != null ) {
-            socket = connectRemote(remote);
+            this.socket = connectRemote(remote);
             startupInfo.dwFlags = Startf_UseStdHandles;
-            startupInfo.hStdInput = socket;
-            startupInfo.hStdOutput = socket;
-            startupInfo.hStdError = socket;
+            startupInfo.hStdInput = this.socket;
+            startupInfo.hStdOutput = this.socket;
+            startupInfo.hStdError = this.socket;
         }
 
         try {
-            desktopName = stationDaclObj.AddAclToActiveWindowStation(domainName, username);
+            desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username);
         } catch(RunasCsException e) {
             Console.Out.WriteLine("[-] Error: " + e.Message);
             Console.Out.WriteLine("[*] Warning: Could not assign permissions to current WindowStation/Desktop.");
             Console.Out.WriteLine("[*] Warning: lpDesktop paramater will be left empty");
-            stationDaclObj.CleanupHandles();
+            this.stationDaclObj.CleanupHandles();
         }
 
         startupInfo.lpDesktop = desktopName;
@@ -553,11 +570,10 @@ public static class RunasCs
         }
 
         if(processTimeout > 0) {
-            CloseHandle(hOutputWrite);
-            CloseHandle(hErrorWrite);
+            CloseHandle(this.hOutputWrite);
+            CloseHandle(this.hErrorWrite);
             WaitForSingleObject(processInfo.process, processTimeout);
-            output += ReadOutputFromPipe(hOutputRead);
-            CloseHandle(hOutputRead);
+            output += ReadOutputFromPipe(this.hOutputRead);
 
         } else {
             output += "[+] Running in session " + sessionId.ToString() + " with process function " + GetProcessFunction(createProcessFunction) + "\r\n";
@@ -567,7 +583,7 @@ public static class RunasCs
 
         CloseHandle(processInfo.process);
         CloseHandle(processInfo.thread);
-        CleanupHandles();
+        this.CleanupHandles();
         return output;
     }
 }
@@ -1129,7 +1145,8 @@ public class WindowStationDACL{
         return lpDesktop;
     }
     
-    public void CleanupHandles(){
+    public void CleanupHandles()
+    {
         if(this.hWinsta != IntPtr.Zero) CloseWindowStation(this.hWinsta);
         if(this.hDesktop != IntPtr.Zero) CloseDesktop(this.hDesktop);
         if(this.userSid != IntPtr.Zero) FreeSid(this.userSid);
@@ -1484,10 +1501,11 @@ Examples:
             processTimeout = 0;
         }
 
+        RunasCs invoker = new RunasCs();
         try {
-            output = RunasCs.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction, remote);
+            output = invoker.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction, remote);
         } catch(RunasCsException e) {
-            RunasCs.CleanupHandles();
+            invoker.CleanupHandles();
             output = String.Format("{0}", e.Message);
         }
 
