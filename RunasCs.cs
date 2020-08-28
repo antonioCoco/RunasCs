@@ -495,7 +495,7 @@ public class RunasCs
         try {
             desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username);
         } catch(RunasCsException e) {
-            Console.Out.WriteLine("[-] Error: " + e.Message);
+            Console.Out.WriteLine(e.Message);
             Console.Out.WriteLine("[*] Warning: Could not assign permissions to current WindowStation/Desktop.");
             Console.Out.WriteLine("[*] Warning: lpDesktop paramater will be left empty");
             this.stationDaclObj.CleanupHandles();
