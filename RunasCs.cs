@@ -353,6 +353,7 @@ public class RunasCs
         success = ImpersonateLoggedOnUser(hToken);
         if(success == false) {
             warning = "[*] Warning: ImpersonateLoggedOnUser failed with error code: " + Marshal.GetLastWin32Error();
+            RevertToSelf();
             return false;
         }
 
@@ -360,9 +361,10 @@ public class RunasCs
         if(success == false)
         {
             warning = "[*] Warning: lpEnvironment failed with error code: " + Marshal.GetLastWin32Error() + ".\n";
+            RevertToSelf();
             return false;
         }
-
+        
         // obtain USERPROFILE value
         int dwSize = 0;
         GetUserProfileDirectory(hToken, null, ref dwSize);
@@ -371,6 +373,7 @@ public class RunasCs
         if(success == false)
         {
             warning = "[*] Warning: GetUserProfileDirectory failed with error code: " + Marshal.GetLastWin32Error();
+            RevertToSelf();
             return false;
         }
 
@@ -410,7 +413,7 @@ public class RunasCs
         managedArray = newEnv.ToArray();
         lpEnvironment = Marshal.AllocHGlobal(managedArray.Length);
         Marshal.Copy(managedArray, 0, lpEnvironment, managedArray.Length);
-
+    
         success = RevertToSelf();
         if(success == false)
         {
