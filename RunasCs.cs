@@ -343,6 +343,25 @@ public class RunasCs
 
         return socket;
     }
+    
+    private static int CountMultiStringBytes(IntPtr unicodeStrIntPtr)
+    {
+    // EnvironmentBlock format: Unicode-Str\0Unicode-Str\0...Unicode-Str\0\0.
+        int count = 0;
+        while (true)
+        {
+            string str = Marshal.PtrToStringUni(unicodeStrIntPtr);
+            if (str.Length == 0)
+                break;
+            int stringLen = (str.Length + 1 /* char \0 */) * sizeof(char);
+            count = count + stringLen;
+            if(IntPtr.Size == 8)
+                unicodeStrIntPtr = new IntPtr(unicodeStrIntPtr.ToInt64() + stringLen);
+            else
+                unicodeStrIntPtr = new IntPtr(unicodeStrIntPtr.ToInt32() + stringLen);
+        }
+        return count;
+    }
 
     private static bool getUserEnvironmentBlock(IntPtr hToken, out IntPtr lpEnvironment, out string warning)
     {
@@ -376,16 +395,7 @@ public class RunasCs
             return false;
         }
 
-        // EnvironmentBlock format: Unicode-Str\0Unicode-Str\0...Unicode-Str\0\0.
-        // Search for the \0\0 sequence to determine the end of the EnvironmentBlock.
-        int count = 0;
-        unsafe {
-            short *start = (short*)lpEnvironment.ToPointer();
-            while( *start != 0 || *(start - 1) != 0 ) {
-                count += 2;
-                start += 1;
-            }
-        }
+        int count = CountMultiStringBytes(lpEnvironment);
 
         // copy raw environment to a managed array and free the unmanaged block
         byte[] managedArray = new byte[count];
