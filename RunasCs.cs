@@ -507,17 +507,7 @@ public class RunasCs
             startupInfo.hStdError = this.socket;
         }
 
-        /*try {
-            desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username);
-        } catch(RunasCsException e) {
-            Console.Out.WriteLine(e.Message);
-            Console.Out.WriteLine("[*] Warning: Could not assign permissions to current WindowStation/Desktop.");
-            Console.Out.WriteLine("[*] Warning: lpDesktop paramater will be left empty");
-            this.stationDaclObj.CleanupHandles();
-        }*/
-        
-        desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username);
-        
+        desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username);        
         startupInfo.lpDesktop = desktopName;
 
         if(createProcessFunction == 2){
