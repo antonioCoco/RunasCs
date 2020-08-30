@@ -386,7 +386,7 @@ public class RunasCs
             RevertToSelf();
             return false;
         }
-        
+                
         // obtain USERPROFILE value
         int dwSize = 0;
         GetUserProfileDirectory(hToken, null, ref dwSize);
@@ -520,7 +520,7 @@ public class RunasCs
                 success = CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
             }
             else
-                success = CreateProcessWithLogonW(username, domainName, password, LOGON_WITH_PROFILE, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
+                success = CreateProcessWithLogonW(username, domainName, password, 0, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
             if (success == false){
                 throw new RunasCsException("CreateProcessWithLogonW failed with " + Marshal.GetLastWin32Error());
             }
@@ -1293,7 +1293,7 @@ Optional arguments:
     -f, --function create_process_function
                             CreateProcess function to use. When not specified
                             RunasCs determines an appropriate CreateProcess
-                            function automatucally according to your privileges.
+                            function automatically according to your privileges.
                             0 - CreateProcessAsUserA
                             1 - CreateProcessWithTokenW
                             2 - CreateProcessWithLogonW
