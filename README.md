@@ -54,8 +54,8 @@ Positional arguments:
                             commandline for the process if process_timeout=0
 Optional arguments:
     -d, --domain domain
-                            domain of the user, if in a domain. 
-                            Default: """"
+                            domain of the user, if in a domain.
+                            Default: ""
     -f, --function create_process_function
                             CreateProcess function to use. When not specified
                             RunasCs determines an appropriate CreateProcess
@@ -65,7 +65,7 @@ Optional arguments:
                             2 - CreateProcessWithLogonW
     -l, --logon-type logon_type
                             the logon type for the spawned process.
-                            Default: ""3""
+                            Default: "3"
     -r, --remote host:port
                             redirect stdin, stdout and stderr to a remote host.
                             Using this option sets the process timeout to 0.
@@ -75,7 +75,7 @@ Optional arguments:
                             ends and sent the output back to the caller.
                             If you set 0 no output will be retrieved and cmd.exe
                             won't be used to spawn the process.
-                            Default: ""120000""
+                            Default: "120000"
     -p, --create-profile
                             if this flag is specified RunasCs will force the
                             creation of the user profile on the machine.
@@ -93,10 +93,10 @@ Examples:
     Run a command as a specific domain user and interactive logon type (2)
         RunasCs.exe user1 password1 whoami -d domain -l 2
     Run a background/async process as a specific local user,
-        RunasCs.exe user1 password1 ""%COMSPEC% powershell -enc..."" -t 0
+        RunasCs.exe user1 password1 "%COMSPEC% powershell -enc..." -t 0
     Redirect stdin, stdout and stderr of the specified command to a remote host
         RunasCs.exe user1 password1 cmd.exe -r 10.10.10.24:4444
-    Run a command simulating the /netonly flag of runas.exe 
+    Run a command simulating the /netonly flag of runas.exe
         RunasCs.exe user1 password1 whoami -d domain -l 9
 ```
 
