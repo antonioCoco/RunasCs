@@ -453,7 +453,7 @@ public class RunasCs
         this.stationDaclObj = null;
     }
 
-    public string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction, string[] remote)
+    public string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction, string[] remote, bool createUserProfile)
     /*
         int createProcessFunction:
             0: CreateProcessAsUser();
@@ -467,6 +467,7 @@ public class RunasCs
         string commandLine = cmd;
         string processPath = null;
         int sessionId = System.Diagnostics.Process.GetCurrentProcess().SessionId;
+        int logonFlags = (createUserProfile) ? (int)LOGON_WITH_PROFILE : 0;
 
         IntPtr hCurrentProcess = Process.GetCurrentProcess().Handle;
 
@@ -520,7 +521,7 @@ public class RunasCs
                 success = CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
             }
             else
-                success = CreateProcessWithLogonW(username, domainName, password, 0, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
+                success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
             if (success == false){
                 throw new RunasCsException("CreateProcessWithLogonW failed with " + Marshal.GetLastWin32Error());
             }
@@ -573,7 +574,7 @@ public class RunasCs
 
             } else if(createProcessFunction == 1){
 
-                success = CreateProcessWithTokenW(hTokenDuplicate, 0, processPath, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, null, ref startupInfo, out processInfo);
+                success = CreateProcessWithTokenW(hTokenDuplicate, logonFlags, processPath, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, null, ref startupInfo, out processInfo);
                 if(success == false)
                 {
                     throw new RunasCsException("CreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error());
@@ -1302,7 +1303,7 @@ Optional arguments:
                             Default: ""3""
     -r, --remote host:port
                             redirect stdin, stdout and stderr to a remote host.
-                            Using this options sets the process timeout to 0.
+                            Using this option sets the process timeout to 0.
     -t, --timeout process_timeout
                             the waiting time (in ms) for the created process.
                             This will halt RunasCs until the spawned process
@@ -1310,6 +1311,16 @@ Optional arguments:
                             If you set 0 no output will be retrieved and cmd.exe
                             won't be used to spawn the process.
                             Default: ""120000""
+    -p, --create-profile
+                            if this flag is specified RunasCs will force the
+                            creation of the user profile on the machine.
+                            This will ensure the process will have the
+                            environment variables correctly set.
+                            NOTE: this will leave some forensics traces
+                            behind creating the user profile directory.
+                            Compatible only with -f flags:
+                                1 - CreateProcessWithTokenW
+                                2 - CreateProcessWithLogonW
 
 Examples:
     Run a command as a specific local user
@@ -1467,7 +1478,8 @@ Examples:
         string[] remote = null;
         uint processTimeout = 120000;
         int logonType = 3, createProcessFunction = DefaultCreateProcessFunction();
-
+        bool createUserProfile = false;
+        
         try {
             for(int ctr = 0; ctr < args.Length; ctr++) {
                 switch (args[ctr])
@@ -1497,7 +1509,12 @@ Examples:
                     case "--remote":
                         remote = ValidateRemote(args[++ctr]);
                         break;
-
+                    
+                    case "-p":
+                    case "--create-profile":
+                        createUserProfile = true;
+                        break;
+                    
                     default:
                         positionals.Add(args[ctr]);
                         break;
@@ -1523,7 +1540,7 @@ Examples:
 
         RunasCs invoker = new RunasCs();
         try {
-            output = invoker.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction, remote);
+            output = invoker.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction, remote, createUserProfile);
         } catch(RunasCsException e) {
             invoker.CleanupHandles();
             output = String.Format("{0}", e.Message);
