@@ -564,8 +564,8 @@ public class RunasCs
                 EnableAllPrivileges(hTokenDuplicate);
                 
             if(createProcessFunction == 0){
-
-                success = CreateProcessAsUser(hTokenDuplicate, processPath, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, null, ref startupInfo, out processInfo);
+                //the inherit handle flag must be true otherwise the pipe handles won't be inherited and the output won't be retrieved
+                success = CreateProcessAsUser(hTokenDuplicate, processPath, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo);
                 if(success == false)
                 {
                     throw new RunasCsException("CreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error());
