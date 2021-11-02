@@ -285,7 +285,6 @@ public class RunasCs
         output += EnablePrivilege("SeTrustedCredManAccessPrivilege", token);
         output += EnablePrivilege("SeUndockPrivilege", token);
         output += EnablePrivilege("SeUnsolicitedInputPrivilege", token);
-        output += EnablePrivilege("SeIncreaseQuotaPrivilege", token);
         return output;
     }
     
@@ -1440,21 +1439,18 @@ Examples:
         List<string[]> privs = new List<string[]>();
         privs = Token.getTokenPrivileges(currentTokenHandle);
 
-        bool SeIncreaseQuotaPrivilegeAssigned = false;
         bool SeAssignPrimaryTokenPrivilegeAssigned = false;
         bool SeImpersonatePrivilegeAssigned = false;
 
         foreach (string[] s in privs)
         {
             string privilege = s[0];
-            if(privilege == "SeIncreaseQuotaPrivilege")
-                SeIncreaseQuotaPrivilegeAssigned = true;
             if(privilege == "SeAssignPrimaryTokenPrivilege")
                 SeAssignPrimaryTokenPrivilegeAssigned = true;
             if(privilege == "SeImpersonatePrivilege")
                 SeImpersonatePrivilegeAssigned = true;
         }
-        if (SeIncreaseQuotaPrivilegeAssigned && SeAssignPrimaryTokenPrivilegeAssigned)
+        if (SeAssignPrimaryTokenPrivilegeAssigned)
             createProcessFunction = 0;
         else 
             if (SeImpersonatePrivilegeAssigned)
