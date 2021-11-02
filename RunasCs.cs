@@ -249,42 +249,10 @@ public class RunasCs
     public static string EnableAllPrivileges(IntPtr token)
     {
         string output="";
-        output += EnablePrivilege("SeAssignPrimaryTokenPrivilege", token);
-        output += EnablePrivilege("SeAuditPrivilege", token);
-        output += EnablePrivilege("SeBackupPrivilege", token);
-        output += EnablePrivilege("SeChangeNotifyPrivilege", token);
-        output += EnablePrivilege("SeCreateGlobalPrivilege", token);
-        output += EnablePrivilege("SeCreatePagefilePrivilege", token);
-        output += EnablePrivilege("SeCreatePermanentPrivilege", token);
-        output += EnablePrivilege("SeCreateSymbolicLinkPrivilege", token);
-        output += EnablePrivilege("SeCreateTokenPrivilege", token);
-        output += EnablePrivilege("SeDebugPrivilege", token);
-        output += EnablePrivilege("SeDelegateSessionUserImpersonatePrivilege", token);
-        output += EnablePrivilege("SeEnableDelegationPrivilege", token);
-        output += EnablePrivilege("SeImpersonatePrivilege", token);
-        output += EnablePrivilege("SeIncreaseBasePriorityPrivilege", token);
-        output += EnablePrivilege("SeIncreaseQuotaPrivilege", token);
-        output += EnablePrivilege("SeIncreaseWorkingSetPrivilege", token);
-        output += EnablePrivilege("SeLoadDriverPrivilege", token);
-        output += EnablePrivilege("SeLockMemoryPrivilege", token);
-        output += EnablePrivilege("SeMachineAccountPrivilege", token);
-        output += EnablePrivilege("SeManageVolumePrivilege", token);
-        output += EnablePrivilege("SeProfileSingleProcessPrivilege", token);
-        output += EnablePrivilege("SeRelabelPrivilege", token);
-        output += EnablePrivilege("SeRemoteShutdownPrivilege", token);
-        output += EnablePrivilege("SeRestorePrivilege", token);
-        output += EnablePrivilege("SeSecurityPrivilege", token);
-        output += EnablePrivilege("SeShutdownPrivilege", token);
-        output += EnablePrivilege("SeSyncAgentPrivilege", token);
-        output += EnablePrivilege("SeSystemEnvironmentPrivilege", token);
-        output += EnablePrivilege("SeSystemProfilePrivilege", token);
-        output += EnablePrivilege("SeSystemtimePrivilege", token);
-        output += EnablePrivilege("SeTakeOwnershipPrivilege", token);
-        output += EnablePrivilege("SeTcbPrivilege", token);
-        output += EnablePrivilege("SeTimeZonePrivilege", token);
-        output += EnablePrivilege("SeTrustedCredManAccessPrivilege", token);
-        output += EnablePrivilege("SeUndockPrivilege", token);
-        output += EnablePrivilege("SeUnsolicitedInputPrivilege", token);
+        string[] privileges = { "SeAssignPrimaryTokenPrivilege", "SeAuditPrivilege", "SeBackupPrivilege", "SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege", "SeCreatePagefilePrivilege", "SeCreatePermanentPrivilege", "SeCreateSymbolicLinkPrivilege", "SeCreateTokenPrivilege", "SeDebugPrivilege", "SeDelegateSessionUserImpersonatePrivilege", "SeEnableDelegationPrivilege", "SeImpersonatePrivilege", "SeIncreaseBasePriorityPrivilege", "SeIncreaseQuotaPrivilege", "SeIncreaseWorkingSetPrivilege", "SeLoadDriverPrivilege", "SeLockMemoryPrivilege", "SeMachineAccountPrivilege", "SeManageVolumePrivilege", "SeProfileSingleProcessPrivilege", "SeRelabelPrivilege", "SeRemoteShutdownPrivilege", "SeRestorePrivilege", "SeSecurityPrivilege", "SeShutdownPrivilege", "SeSyncAgentPrivilege", "SeSystemEnvironmentPrivilege", "SeSystemProfilePrivilege", "SeSystemtimePrivilege", "SeTakeOwnershipPrivilege", "SeTcbPrivilege", "SeTimeZonePrivilege", "SeTrustedCredManAccessPrivilege", "SeUndockPrivilege", "SeUnsolicitedInputPrivilege" };
+        foreach (string privilege in privileges) {
+            output += EnablePrivilege(privilege, token);
+        }
         return output;
     }
     
