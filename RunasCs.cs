@@ -474,14 +474,13 @@ public class RunasCs
             startupInfo.hStdError = this.socket;
         }
 
-        desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username);        
+        desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username, logonType);        
         startupInfo.lpDesktop = desktopName;
 
         if(createProcessFunction == 2){
 
-            if(logonType == 9){
-                if(domainName == "")
-                    throw new RunasCsException("You must provide a domain name when using logon type 9 with CreateProcessWithLogonW.");
+            if(logonType == 9 && domainName == ""){
+                domainName = ".";
                 success = CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
             }
             else
@@ -1082,7 +1081,7 @@ public class WindowStationDACL{
     }
     
 
-    public string AddAclToActiveWindowStation(string domain, string username){
+    public string AddAclToActiveWindowStation(string domain, string username, int logonType){
         string lpDesktop = "";
         byte[] stationNameBytes = new byte[256];
         string stationName = "";
@@ -1097,32 +1096,35 @@ public class WindowStationDACL{
         }
         stationName = Encoding.Default.GetString(stationNameBytes).Substring(0, (int)lengthNeeded-1);
 
-        this.hWinsta = OpenWindowStation(stationName, false, ACCESS_MASK.READ_CONTROL | ACCESS_MASK.WRITE_DAC);
-        if(this.hWinsta == IntPtr.Zero)
+        // this should be avoided with the LOGON32_LOGON_NEW_CREDENTIALS logon type or some bug can happen in LookupAccountName()
+        if (logonType != 9)
         {
-            throw new RunasCsException("OpenWindowStation failed with error code " + Marshal.GetLastWin32Error());
-        }
-        
-        if(!SetProcessWindowStation(this.hWinsta))
-        {
-            throw new RunasCsException("SetProcessWindowStation hWinsta failed with error code " + Marshal.GetLastWin32Error());
-        }
+            this.hWinsta = OpenWindowStation(stationName, false, ACCESS_MASK.READ_CONTROL | ACCESS_MASK.WRITE_DAC);
+            if (this.hWinsta == IntPtr.Zero)
+            {
+                throw new RunasCsException("OpenWindowStation failed with error code " + Marshal.GetLastWin32Error());
+            }
 
-        this.hDesktop = OpenDesktop("Default", 0, false, ACCESS_MASK.READ_CONTROL | ACCESS_MASK.WRITE_DAC | ACCESS_MASK.DESKTOP_WRITEOBJECTS | ACCESS_MASK.DESKTOP_READOBJECTS);
-        if(!SetProcessWindowStation(hWinstaSave))
-        {
-            throw new RunasCsException("SetProcessWindowStation hWinstaSave failed with error code " + Marshal.GetLastWin32Error());
+            if (!SetProcessWindowStation(this.hWinsta))
+            {
+                throw new RunasCsException("SetProcessWindowStation hWinsta failed with error code " + Marshal.GetLastWin32Error());
+            }
+
+            this.hDesktop = OpenDesktop("Default", 0, false, ACCESS_MASK.READ_CONTROL | ACCESS_MASK.WRITE_DAC | ACCESS_MASK.DESKTOP_WRITEOBJECTS | ACCESS_MASK.DESKTOP_READOBJECTS);
+            if (!SetProcessWindowStation(hWinstaSave))
+            {
+                throw new RunasCsException("SetProcessWindowStation hWinstaSave failed with error code " + Marshal.GetLastWin32Error());
+            }
+
+            if (this.hWinsta == IntPtr.Zero)
+            {
+                throw new RunasCsException("OpenDesktop failed with error code " + Marshal.GetLastWin32Error());
+            }
+
+            this.userSid = GetUserSid(domain, username);
+            AddAceToWindowStation();
+            AddAceToDesktop();
         }
-
-        if(this.hWinsta == IntPtr.Zero)
-        {
-            throw new RunasCsException("OpenDesktop failed with error code " + Marshal.GetLastWin32Error());
-        }
-
-        this.userSid = GetUserSid(domain, username);
-
-        AddAceToWindowStation();
-        AddAceToDesktop();
 
         lpDesktop = stationName + "\\Default";
         return lpDesktop;
