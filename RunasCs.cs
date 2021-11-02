@@ -358,10 +358,7 @@ public class RunasCs
                 break;
             int stringLen = (str.Length + 1 /* char \0 */) * sizeof(char);
             count = count + stringLen;
-            if(IntPtr.Size == 8)
-                unicodeStrIntPtr = new IntPtr(unicodeStrIntPtr.ToInt64() + stringLen);
-            else
-                unicodeStrIntPtr = new IntPtr(unicodeStrIntPtr.ToInt32() + stringLen);
+            unicodeStrIntPtr = new IntPtr(unicodeStrIntPtr.ToInt64() + stringLen);
         }
         return count;
     }
