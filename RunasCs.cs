@@ -522,6 +522,7 @@ public class RunasCs
                 Console.Out.WriteLine(warning);
                 Console.Out.WriteLine(String.Format("[*] Warning: Unable to obtain environment for user '{0}'.", username));
                 Console.Out.WriteLine(String.Format("[*] Warning: Environment of created process might be incorrect.", username));
+                Console.Out.Flush();
             }
 
             //enable all privileges assigned to the token
@@ -555,6 +556,8 @@ public class RunasCs
         if(processTimeout > 0) {
             CloseHandle(this.hOutputWrite);
             CloseHandle(this.hErrorWrite);
+            this.hOutputWrite = IntPtr.Zero;
+            this.hErrorWrite = IntPtr.Zero;
             WaitForSingleObject(processInfo.process, processTimeout);
             output += ReadOutputFromPipe(this.hOutputRead);
 
@@ -1522,7 +1525,12 @@ class MainClass
         string[] argsTest = new string[10];
         argsTest[0] = "admin";
         argsTest[1] = "pwd";
-        argsTest[2] = "whoami /priv";
+        argsTest[2] = "whoami /all";
+        argsTest[3] = "--function";
+        argsTest[4] = "2";
+        //argsTest[3] = "--logon-type";
+        //argsTest[4] = "2";
+
         Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
     }
 }
