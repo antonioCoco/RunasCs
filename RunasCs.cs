@@ -455,6 +455,7 @@ public class RunasCs
             }
 
             CloseHandle(this.hOutputReadTmp);
+            this.hOutputReadTmp = IntPtr.Zero;
             UInt32 PIPE_NOWAIT = 0x00000001;
             if(!SetNamedPipeHandleState(this.hOutputRead, ref PIPE_NOWAIT, IntPtr.Zero, IntPtr.Zero)) {
                 throw new RunasCsException("SetNamedPipeHandleState failed with error code: " + Marshal.GetLastWin32Error());
@@ -1513,6 +1514,20 @@ Examples:
     }
 }
 
+class MainClass
+{
+
+    static void Main(string[] args)
+    {
+        string[] argsTest = new string[10];
+        argsTest[0] = "admin";
+        argsTest[1] = "pwd";
+        argsTest[2] = "whoami /priv";
+        Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
+    }
+}
+
+/*
 class MainClass{
 
     static void Main(string[] args)
@@ -1520,3 +1535,4 @@ class MainClass{
         Console.Out.Write(RunasCsMainClass.RunasCsMain(args));
     }
 }
+*/
