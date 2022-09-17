@@ -9,7 +9,7 @@ This tool is an improved (from a pentest perspective) and open version of window
 * Works both if spawned from interactive process and from service process
 * Manage properly *DACL* for *Window Stations* and *Desktop* for the creation of the new process
 * Uses more reliable create process functions like ``CreateProcessAsUser()`` and ``CreateProcessWithTokenW()`` if the calling process holds the required privileges (automatic detection)
-* Allows to specify the logon type, i.e. network cleartext logon 8 (no *UAC* limitations)
+* Allows to specify the logon type, e.g. 8-NetworkCleartext logon (no *UAC* limitations)
 * Allows to bypass UAC when an administrator password is known (flag --bypass-uac)
 * Allows redirecting *stdin*, *stdout* and *stderr* to a remote host
 * It's Open Source :)
