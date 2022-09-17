@@ -110,6 +110,7 @@ You can make interactive logon without any restrictions by setting the following
 HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableLUA
 ```
 
+Otherwise, you can try the flag --bypass-uac for an attempt in bypassing the token filtered limitation.
 By default, the calling process (*RunasCs*) will wait until the end of the execution of the spawned process and will use
 ``cmd.exe`` to manage *stdout* and *stderr*. If you need to spawn a background or async process, i.e. spawning a reverse shell,
 you need to set the parameter ``-t timeout`` to ``0``. In this case the process will be spawned without using ``cmd.exe``
