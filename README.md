@@ -101,7 +101,9 @@ Examples:
 ```
 
 The two processes (calling and called) will communicate through one *pipe* (both for *stdout* and *stderr*).
-The default logon type is 3 (*Network_Logon*). If you set *Interactive* (2) logon type you will face some *UAC* restriction problems.
+The default logon type is 8 (*NetworkCleartext*). 
+*NetworkCleartext* logon type is the one with widest permissions as it doesn't get filtered by UAC for local tokens and still allows authentications over the Network.
+If you set *Interactive* (2) logon type you will face some *UAC* restriction problems.
 You can make interactive logon without any restrictions by setting the following regkey to 0 and restart the server:
 
 ```

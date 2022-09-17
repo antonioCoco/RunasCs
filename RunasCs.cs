@@ -563,7 +563,7 @@ public class RunasCs
                     Console.Out.Flush();
                 }
 
-                //enable all privileges assigned to the token
+                // enable all privileges assigned to the token
                 if (logonType != LOGON32_LOGON_NETWORK && logonType != LOGON32_LOGON_NETWORK_CLEARTEXT)
                     AccessToken.EnableAllPrivileges(hTokenDuplicate);
 
@@ -1547,7 +1547,7 @@ Optional arguments:
                             2 - CreateProcessWithLogonW
     -l, --logon-type logon_type
                             the logon type for the spawned process.
-                            Default: ""3""
+                            Default: ""8"" - NetworkCleartext
     -r, --remote host:port
                             redirect stdin, stdout and stderr to a remote host.
                             Using this option sets the process timeout to 0.
@@ -1721,7 +1721,7 @@ Examples:
         username = password = cmd = domain = string.Empty;
         string[] remote = null;
         uint processTimeout = 120000;
-        int logonType = 3, createProcessFunction = DefaultCreateProcessFunction();
+        int logonType = 8, createProcessFunction = DefaultCreateProcessFunction();
         bool createUserProfile = false, bypassUac = false;
         
         try {
@@ -1812,7 +1812,7 @@ class MainClass
         argsTest[3] = "--function";
         argsTest[4] = "1";
         argsTest[5] = "--logon-type";
-        argsTest[6] = "2";
+        argsTest[6] = "4";
         //argsTest[7] = "--bypass-uac";
 
         Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
