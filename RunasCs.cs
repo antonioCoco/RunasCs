@@ -33,7 +33,6 @@ public class RunasCs
     private const uint CREATE_NO_WINDOW = 0x08000000;
     private const uint GENERIC_ALL = 0x10000000;
     private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
-    private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
     private const uint DACL_SECURITY_INFORMATION = 0x00000004;
     private const UInt32 LOGON_WITH_PROFILE = 1;
@@ -55,28 +54,6 @@ public class RunasCs
         this.hErrorWrite = new IntPtr(0);
         this.socket = new IntPtr(0);
         this.stationDaclObj = null;
-    }
-    
-    [StructLayout(LayoutKind.Sequential)]
-    private struct LUID 
-    {
-       public UInt32 LowPart;
-       public Int32 HighPart;
-    }
-    
-    [StructLayout(LayoutKind.Sequential, Pack = 4)]
-    private struct LUID_AND_ATTRIBUTES 
-    {
-       public LUID Luid;
-       public UInt32 Attributes;
-    }
-    
-    [StructLayout(LayoutKind.Sequential)]
-    private struct TOKEN_PRIVILEGES
-    {
-        public UInt32 PrivilegeCount;
-        public LUID Luid;
-        public UInt32 Attributes;
     }
     
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -177,12 +154,6 @@ public class RunasCs
 
     [DllImport("advapi32.dll", SetLastError = true)]
     static extern bool RevertToSelf();
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool AdjustTokenPrivileges(IntPtr tokenhandle, bool disableprivs, [MarshalAs(UnmanagedType.Struct)]ref TOKEN_PRIVILEGES Newstate, int bufferlength, int PreivousState, int Returnlength);
-    
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern int LookupPrivilegeValue(string lpsystemname, string lpname, [MarshalAs(UnmanagedType.Struct)] ref LUID lpLuid);
     
     [DllImport("advapi32.dll", SetLastError = true, BestFitMapping = false, ThrowOnUnmappableChar = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -255,31 +226,6 @@ public class RunasCs
         if(createProcessFunction == 1)
             return "CreateProcessWithTokenW()";
         return "CreateProcessWithLogonW()";
-    }
-    
-    private static string EnablePrivilege(string privilege, IntPtr token){
-        string output = "";
-        LUID sebLuid = new LUID();
-        TOKEN_PRIVILEGES tokenp = new TOKEN_PRIVILEGES();
-        tokenp.PrivilegeCount = 1;
-        LookupPrivilegeValue(null, privilege, ref sebLuid);
-        tokenp.Luid = sebLuid;
-        tokenp.Attributes = SE_PRIVILEGE_ENABLED;
-        if(!AdjustTokenPrivileges(token, false, ref tokenp, 0, 0, 0)){
-            throw new RunasCsException("AdjustTokenPrivileges on privilege " + privilege + " failed with error code: " + Marshal.GetLastWin32Error());
-        }
-        output += "\r\nAdjustTokenPrivileges on privilege " + privilege + " succeeded";
-        return output;
-    }
-    
-    public static string EnableAllPrivileges(IntPtr token)
-    {
-        string output="";
-        string[] privileges = { "SeAssignPrimaryTokenPrivilege", "SeAuditPrivilege", "SeBackupPrivilege", "SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege", "SeCreatePagefilePrivilege", "SeCreatePermanentPrivilege", "SeCreateSymbolicLinkPrivilege", "SeCreateTokenPrivilege", "SeDebugPrivilege", "SeDelegateSessionUserImpersonatePrivilege", "SeEnableDelegationPrivilege", "SeImpersonatePrivilege", "SeIncreaseBasePriorityPrivilege", "SeIncreaseQuotaPrivilege", "SeIncreaseWorkingSetPrivilege", "SeLoadDriverPrivilege", "SeLockMemoryPrivilege", "SeMachineAccountPrivilege", "SeManageVolumePrivilege", "SeProfileSingleProcessPrivilege", "SeRelabelPrivilege", "SeRemoteShutdownPrivilege", "SeRestorePrivilege", "SeSecurityPrivilege", "SeShutdownPrivilege", "SeSyncAgentPrivilege", "SeSystemEnvironmentPrivilege", "SeSystemProfilePrivilege", "SeSystemtimePrivilege", "SeTakeOwnershipPrivilege", "SeTcbPrivilege", "SeTimeZonePrivilege", "SeTrustedCredManAccessPrivilege", "SeUndockPrivilege", "SeUnsolicitedInputPrivilege" };
-        foreach (string privilege in privileges) {
-            output += EnablePrivilege(privilege, token);
-        }
-        return output;
     }
     
     private static bool CreateAnonymousPipeEveryoneAccess(ref IntPtr hReadPipe, ref IntPtr hWritePipe)
@@ -619,7 +565,7 @@ public class RunasCs
 
                 //enable all privileges assigned to the token
                 if (logonType != LOGON32_LOGON_NETWORK && logonType != LOGON32_LOGON_NETWORK_CLEARTEXT)
-                    EnableAllPrivileges(hTokenDuplicate);
+                    AccessToken.EnableAllPrivileges(hTokenDuplicate);
 
                 if (createProcessFunction == 0)
                 {
@@ -1249,7 +1195,7 @@ public static class AccessToken{
     private const int SECURITY_MANDATORY_HIGH_RID = 0x3000;
     private const int SECURITY_MANDATORY_SYSTEM_RID = 0x4000;
     private const int SECURITY_MANDATORY_PROTECTED_PROCESS_RID = 0x5000;
-
+    private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
     private static readonly byte[] MANDATORY_LABEL_AUTHORITY = new byte[] { 0, 0, 0, 0, 0, 16 };
 
     [DllImport("advapi32.dll", SetLastError=true)]
@@ -1273,6 +1219,12 @@ public static class AccessToken{
 
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern IntPtr GetSidSubAuthorityCount(IntPtr sid);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool AdjustTokenPrivileges(IntPtr tokenhandle, bool disableprivs, [MarshalAs(UnmanagedType.Struct)] ref TOKEN_PRIVILEGES_2 Newstate, int bufferlength, int PreivousState, int Returnlength);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern int LookupPrivilegeValue(string lpsystemname, string lpname, [MarshalAs(UnmanagedType.Struct)] ref LUID lpLuid);
 
     public enum TOKEN_INFORMATION_CLASS
     {
@@ -1358,7 +1310,15 @@ public static class AccessToken{
        [MarshalAs(UnmanagedType.ByValArray, SizeConst=64)]
        public LUID_AND_ATTRIBUTES [] Privileges;
     }
-    
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TOKEN_PRIVILEGES_2
+    {
+        public UInt32 PrivilegeCount;
+        public LUID Luid;
+        public UInt32 Attributes;
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
     private struct LUID_AND_ATTRIBUTES {
        public LUID Luid;
@@ -1393,7 +1353,7 @@ public static class AccessToken{
     private struct TOKEN_MANDATORY_LABEL
     {
         public SID_AND_ATTRIBUTES Label;
-    };
+    }
 
     private static string convertAttributeToString(UInt32 attribute){
         if(attribute == 0)
@@ -1406,7 +1366,24 @@ public static class AccessToken{
             return "Enabled|Enabled Default";
         return "Error";
     }
-    
+
+    private static string EnablePrivilege(string privilege, IntPtr token)
+    {
+        string output = "";
+        LUID sebLuid = new LUID();
+        TOKEN_PRIVILEGES_2 tokenp = new TOKEN_PRIVILEGES_2();
+        tokenp.PrivilegeCount = 1;
+        LookupPrivilegeValue(null, privilege, ref sebLuid);
+        tokenp.Luid = sebLuid;
+        tokenp.Attributes = SE_PRIVILEGE_ENABLED;
+        if (!AdjustTokenPrivileges(token, false, ref tokenp, 0, 0, 0))
+        {
+            throw new RunasCsException("AdjustTokenPrivileges on privilege " + privilege + " failed with error code: " + Marshal.GetLastWin32Error());
+        }
+        output += "\r\nAdjustTokenPrivileges on privilege " + privilege + " succeeded";
+        return output;
+    }
+
     public static List<string[]> getTokenPrivileges(IntPtr tHandle){
         List<string[]> privileges = new List<string[]>();
         uint TokenInfLength=0;
@@ -1521,6 +1498,17 @@ public static class AccessToken{
         }
         Marshal.FreeHGlobal(pb);
         return illevel;
+    }
+
+    public static string EnableAllPrivileges(IntPtr token)
+    {
+        string output = "";
+        string[] privileges = { "SeAssignPrimaryTokenPrivilege", "SeAuditPrivilege", "SeBackupPrivilege", "SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege", "SeCreatePagefilePrivilege", "SeCreatePermanentPrivilege", "SeCreateSymbolicLinkPrivilege", "SeCreateTokenPrivilege", "SeDebugPrivilege", "SeDelegateSessionUserImpersonatePrivilege", "SeEnableDelegationPrivilege", "SeImpersonatePrivilege", "SeIncreaseBasePriorityPrivilege", "SeIncreaseQuotaPrivilege", "SeIncreaseWorkingSetPrivilege", "SeLoadDriverPrivilege", "SeLockMemoryPrivilege", "SeMachineAccountPrivilege", "SeManageVolumePrivilege", "SeProfileSingleProcessPrivilege", "SeRelabelPrivilege", "SeRemoteShutdownPrivilege", "SeRestorePrivilege", "SeSecurityPrivilege", "SeShutdownPrivilege", "SeSyncAgentPrivilege", "SeSystemEnvironmentPrivilege", "SeSystemProfilePrivilege", "SeSystemtimePrivilege", "SeTakeOwnershipPrivilege", "SeTcbPrivilege", "SeTimeZonePrivilege", "SeTrustedCredManAccessPrivilege", "SeUndockPrivilege", "SeUnsolicitedInputPrivilege" };
+        foreach (string privilege in privileges)
+        {
+            output += EnablePrivilege(privilege, token);
+        }
+        return output;
     }
 
 }
@@ -1822,9 +1810,9 @@ class MainClass
         argsTest[2] = "whoami /all";
         //argsTest[2] = "ping -n 30 127.0.0.1";
         argsTest[3] = "--function";
-        argsTest[4] = "2";
+        argsTest[4] = "1";
         argsTest[5] = "--logon-type";
-        argsTest[6] = "3";
+        argsTest[6] = "2";
         //argsTest[7] = "--bypass-uac";
 
         Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
