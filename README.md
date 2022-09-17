@@ -87,7 +87,7 @@ Optional arguments:
                             Compatible only with -f flags:
                                 1 - CreateProcessWithTokenW
                                 2 - CreateProcessWithLogonW
-	-b, --bypass-uac     
+    -b, --bypass-uac     
                             if this flag is specified RunasCs will try a UAC
                             bypass to spawn a process without token limitation
                             (not filtered).
@@ -120,7 +120,7 @@ You can make interactive logon without any restrictions by setting the following
 HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableLUA
 ```
 
-Otherwise, you can try the flag --bypass-uac for an attempt in bypassing the token filtered limitation.
+Otherwise, you can try the flag **--bypass-uac** for an attempt in bypassing the token filtered limitation.
 
 By default, the calling process (*RunasCs*) will wait until the end of the execution of the spawned process and will use
 ``cmd.exe`` to manage *stdout* and *stderr*. If you need to spawn a background or async process, i.e. spawning a reverse shell,
