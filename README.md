@@ -131,3 +131,4 @@ and *RunasCs* won't wait for the end of the execution.
 
 * [@decoder](https://github.com/decoder-it)
 * [@qtc-de](https://github.com/qtc-de)
+* [@winlogon0](https://twitter.com/winlogon0)
