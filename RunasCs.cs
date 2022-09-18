@@ -512,8 +512,10 @@ public class RunasCs
                             throw new RunasCsException("CreateProcessWithLogonWUacBypass failed with " + Marshal.GetLastWin32Error());
                     }
                     else {
-                        Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
-                        Console.Out.Flush();
+                        if (logonType == LOGON32_LOGON_INTERACTIVE || logonType == 11 /*CachedInteractive*/) { // only these logon types are filtered by UAC
+                            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
+                            Console.Out.Flush();
+                        }
                         success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
                         if (success == false)
                             throw new RunasCsException("CreateProcessWithLogonW logon type 2 failed with " + Marshal.GetLastWin32Error());
@@ -522,7 +524,6 @@ public class RunasCs
                 CloseHandle(hTokenUacCheck);
             }
         } else {
-
             IntPtr hToken = new IntPtr(0);
             IntPtr hTokenDuplicate = new IntPtr(0);
             if(logonType == LOGON32_LOGON_NEW_CREDENTIALS)
@@ -550,8 +551,10 @@ public class RunasCs
                 }
                 else
                 {
-                    Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
-                    Console.Out.Flush();
+                    if (logonType == LOGON32_LOGON_INTERACTIVE || logonType == 11 /*CachedInteractive*/){ // only these logon types are filtered by UAC
+                        Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
+                        Console.Out.Flush();
+                    }
                 }
             }
             else
