@@ -222,7 +222,7 @@ public class RunasCs
     
     private static string GetProcessFunction(int createProcessFunction){
         if(createProcessFunction == 0)
-            return "CreateProcessAsUser()";
+            return "CreateProcessAsUserW()";
         if(createProcessFunction == 1)
             return "CreateProcessWithTokenW()";
         return "CreateProcessWithLogonW()";
@@ -315,10 +315,18 @@ public class RunasCs
             return false;
         }
 
-        success = CreateEnvironmentBlock(out lpEnvironment, hToken, false);
-        if(success == false)
+        try
         {
-            warning = "[*] Warning: lpEnvironment failed with error code: " + Marshal.GetLastWin32Error() + ".\n";
+            success = CreateEnvironmentBlock(out lpEnvironment, hToken, false);
+            if (success == false)
+            {
+                warning = "[*] Warning: CreateEnvironmentBlock failed with error code: " + Marshal.GetLastWin32Error();
+                RevertToSelf();
+                return false;
+            }
+        }
+        catch {
+            warning = "[*] Warning: CreateEnvironmentBlock failed with error code: " + Marshal.GetLastWin32Error();
             RevertToSelf();
             return false;
         }
@@ -420,7 +428,7 @@ public class RunasCs
     public string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction, string[] remote, bool createUserProfile, bool bypassUac)
     /*
         int createProcessFunction:
-            0: CreateProcessAsUser();
+            0: CreateProcessAsUserW();
             1: CreateProcessWithTokenW();
             2: CreateProcessWithLogonW();
     */
@@ -453,9 +461,9 @@ public class RunasCs
             if(!DuplicateHandle(hCurrentProcess, this.hOutputReadTmp, hCurrentProcess, out this.hOutputRead, 0, false, DUPLICATE_SAME_ACCESS)) {
                 throw new RunasCsException("DuplicateHandle stdout read pipe failed with error code: " + Marshal.GetLastWin32Error());
             }
-
             CloseHandle(this.hOutputReadTmp);
             this.hOutputReadTmp = IntPtr.Zero;
+
             UInt32 PIPE_NOWAIT = 0x00000001;
             if(!SetNamedPipeHandleState(this.hOutputRead, ref PIPE_NOWAIT, IntPtr.Zero, IntPtr.Zero)) {
                 throw new RunasCsException("SetNamedPipeHandleState failed with error code: " + Marshal.GetLastWin32Error());
@@ -561,7 +569,7 @@ public class RunasCs
                 success = getUserEnvironmentBlock(hTokenDuplicate, out lpEnvironment, out warning);
                 if (success == false)
                 {
-                    //Console.Out.WriteLine(warning); // this is a debug message
+                    Console.Out.WriteLine(warning); // this is a debug message
                     Console.Out.WriteLine(String.Format("[*] Warning: Unable to obtain environment for user '{0}'. Environment variables of created process might be incorrect.", username));
                     Console.Out.Flush();
                 }
@@ -1545,7 +1553,7 @@ Optional arguments:
                             CreateProcess function to use. When not specified
                             RunasCs determines an appropriate CreateProcess
                             function automatically according to your privileges.
-                            0 - CreateProcessAsUserA
+                            0 - CreateProcessAsUserW
                             1 - CreateProcessWithTokenW
                             2 - CreateProcessWithLogonW
     -l, --logon-type logon_type
@@ -1611,7 +1619,7 @@ Examples:
     private static Dictionary<int,string> getCreateProcessFunctionDict()
     {
         Dictionary<int,string> createProcessFunctions = new Dictionary<int,string>();
-        createProcessFunctions.Add(0, "CreateProcessAsUser");
+        createProcessFunctions.Add(0, "CreateProcessAsUserW");
         createProcessFunctions.Add(1, "CreateProcessWithTokenW");
         createProcessFunctions.Add(2, "CreateProcessWithLogonW");
         return createProcessFunctions;
@@ -1814,15 +1822,15 @@ class MainClass
     static void Main(string[] args)
     {
         string[] argsTest = new string[10];
-        argsTest[0] = "tcbuser";
+        argsTest[0] = "admin";
         argsTest[1] = "pwd";
-        //argsTest[2] = "whoami /all";
-        argsTest[2] = "ping -n 30 127.0.0.1";
+        argsTest[2] = "whoami /all";
+        //argsTest[2] = "ping -n 30 127.0.0.1";
         argsTest[3] = "--function";
-        argsTest[4] = "2";
+        argsTest[4] = "1";
         argsTest[5] = "--logon-type";
-        argsTest[6] = "2";
-        argsTest[7] = "--bypass-uac";
+        argsTest[6] = "8";
+        //argsTest[7] = "--bypass-uac";
         Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
     }
 }
