@@ -478,7 +478,7 @@ public class RunasCs
         startupInfo.lpDesktop = desktopName;
 
         if(createProcessFunction == 2){
-            if (logonType != LOGON32_LOGON_INTERACTIVE && logonType != LOGON32_LOGON_NEW_CREDENTIALS) {
+            if (logonType != LOGON32_LOGON_INTERACTIVE && logonType != LOGON32_LOGON_NEW_CREDENTIALS && !bypassUac) {
                 Console.Out.WriteLine("[*] Warning: Using function CreateProcessWithLogonW is not compatible with logon type " + logonType.ToString() + ". Reverting to logon type Interactive (2)...");
                 Console.Out.Flush();
             }
@@ -487,6 +487,8 @@ public class RunasCs
                 if (domainName == "")
                     domainName = ".";
                 success = CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
+                if (success == false)
+                    throw new RunasCsException("CreateProcessWithLogonW logon type 9 failed with " + Marshal.GetLastWin32Error());
             }
             else {
                 IntPtr hTokenUacCheck = new IntPtr(0);
@@ -505,7 +507,7 @@ public class RunasCs
                         Console.Out.Flush();
                         success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
                         if (success == false)
-                            throw new RunasCsException("CreateProcessWithLogonW failed with " + Marshal.GetLastWin32Error());
+                            throw new RunasCsException("CreateProcessWithLogonW logon type 2 failed with " + Marshal.GetLastWin32Error());
                     }
                 }
                 CloseHandle(hTokenUacCheck);
@@ -1813,12 +1815,13 @@ class MainClass
         string[] argsTest = new string[10];
         argsTest[0] = "admin";
         argsTest[1] = "pwd";
-        argsTest[2] = "cmd.exe";
+        argsTest[2] = "whoami /all";
+        argsTest[3] = "--bypass-uac";
         //argsTest[2] = "ping -n 30 127.0.0.1";
-        argsTest[3] = "--function";
-        argsTest[4] = "2";
-        argsTest[5] = "--logon-type";
-        argsTest[6] = "2";
+        //argsTest[3] = "--function";
+        //argsTest[4] = "2";
+        //argsTest[5] = "--logon-type";
+        //argsTest[6] = "2";
         Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
     }
 }
