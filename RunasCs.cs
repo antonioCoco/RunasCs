@@ -530,20 +530,15 @@ public class RunasCs
             else
                 success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
             if(success == false)
-            {
                 throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
-            }
 
             SECURITY_ATTRIBUTES sa  = new SECURITY_ATTRIBUTES();
             sa.bInheritHandle       = true;
             sa.Length               = Marshal.SizeOf(sa);
             sa.lpSecurityDescriptor = (IntPtr)0;
-
             success = DuplicateTokenEx(hToken, GENERIC_ALL, ref sa, SECURITY_IMPERSONATION_LEVEL.SecurityDelegation, TokenType, ref hTokenDuplicate);
             if(success == false)
-            {
                 throw new RunasCsException("DuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error());
-            }
 
             if (AccessToken.IsLimitedUACToken(hTokenDuplicate))
             {
@@ -563,13 +558,13 @@ public class RunasCs
                 bypassUac = false; // we reset this flag as it's not considered when token is not limited
 
             if (!bypassUac) {
-                // obtain environmentBlock for desired user
                 string warning;
                 IntPtr lpEnvironment;
+                // obtain environmentBlock for desired user
                 success = getUserEnvironmentBlock(hTokenDuplicate, out lpEnvironment, out warning);
                 if (success == false)
                 {
-                    Console.Out.WriteLine(warning); // this is a debug message
+                    //Console.Out.WriteLine(warning); // this is a debug message
                     Console.Out.WriteLine(String.Format("[*] Warning: Unable to obtain environment for user '{0}'. Environment variables of created process might be incorrect.", username));
                     Console.Out.Flush();
                 }
@@ -583,27 +578,17 @@ public class RunasCs
                     //the inherit handle flag must be true otherwise the pipe handles won't be inherited and the output won't be retrieved
                     success = CreateProcessAsUser(hTokenDuplicate, processPath, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo);
                     if (success == false)
-                    {
                         throw new RunasCsException("CreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error());
-                    }
-
                 }
                 else if (createProcessFunction == 1)
                 {
-
                     success = CreateProcessWithTokenW(hTokenDuplicate, logonFlags, processPath, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, null, ref startupInfo, out processInfo);
                     if (success == false)
-                    {
                         throw new RunasCsException("CreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error());
-                    }
                 }
 
-                if (lpEnvironment != IntPtr.Zero)
-                {
-                    DestroyEnvironmentBlock(lpEnvironment);
-                }
+                if (lpEnvironment != IntPtr.Zero) DestroyEnvironmentBlock(lpEnvironment);
             }
-            
             CloseHandle(hToken);
             CloseHandle(hTokenDuplicate);
         }
@@ -615,7 +600,6 @@ public class RunasCs
             this.hErrorWrite = IntPtr.Zero;
             WaitForSingleObject(processInfo.process, processTimeout);
             output += ReadOutputFromPipe(this.hOutputRead);
-
         } else {
             output += "[+] Running in session " + sessionId.ToString() + " with process function " + GetProcessFunction(createProcessFunction) + "\r\n";
             output += "[+] Using Station\\Desktop: " + desktopName + "\r\n";
@@ -1196,7 +1180,6 @@ public class WindowStationDACL{
     }
 }
 
-
 public static class AccessToken{
 
     // Mandatory Label SIDs (integrity levels)
@@ -1524,7 +1507,6 @@ public static class AccessToken{
 
 }
 
-
 public static class RunasCsMainClass
 {
     private static string help = @"
@@ -1596,7 +1578,7 @@ Examples:
     Run a command simulating the /netonly flag of runas.exe 
         RunasCs.exe user1 password1 whoami -d domain -l 9
     Run a command as an Administrator bypassing UAC
-        RunasCs.exe adm1 password1 ""whoami /all"" --bypass-uac
+        RunasCs.exe adm1 password1 ""whoami /priv"" --bypass-uac
 ";
     
     // .NETv2 does not allow dict initialization with values. Therefore, we need a function :(
@@ -1816,31 +1798,9 @@ Examples:
     }
 }
 
-class MainClass
-{
-
-    static void Main(string[] args)
-    {
-        string[] argsTest = new string[10];
-        argsTest[0] = "admin";
-        argsTest[1] = "pwd";
-        argsTest[2] = "whoami /all";
-        //argsTest[2] = "ping -n 30 127.0.0.1";
-        argsTest[3] = "--function";
-        argsTest[4] = "1";
-        argsTest[5] = "--logon-type";
-        argsTest[6] = "8";
-        //argsTest[7] = "--bypass-uac";
-        Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
-    }
-}
-
-/*
 class MainClass{
-
     static void Main(string[] args)
     {
         Console.Out.Write(RunasCsMainClass.RunasCsMain(args));
     }
 }
-*/
