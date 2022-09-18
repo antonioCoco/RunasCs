@@ -33,7 +33,7 @@ function Invoke-RunasCs
             Default: "120000"
         .PARAMETER LogonType
             The logon type for the spawned process.
-            Default: "3"
+            Default: "8"
         .PARAMETER CreateProcessFunction
             CreateProcess function to use. When not specified
             RunasCs determines an appropriate CreateProcess
