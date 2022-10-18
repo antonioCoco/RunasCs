@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Security.Principal;
+using Microsoft.Win32;
 
 public class RunasCsException : Exception
 {
@@ -386,11 +387,11 @@ public class RunasCs
     private bool CreateProcessWithLogonWUacBypass(int logonType, string username, string domainName, string password, string processPath, string commandLine, ref STARTUPINFO startupInfo, out ProcessInformation processInfo) {
         bool result = false;
         IntPtr hToken = new IntPtr(0);
-        // the below logon types are not filtered by UAC, we allow login with them. Otherwise stick with NetworkCleartext
+        // the below logon types are not filtered by UAC, we allow login with them. Otherwise stick with Network
         if (logonType == LOGON32_LOGON_NETWORK || logonType == LOGON32_LOGON_BATCH || logonType == LOGON32_LOGON_SERVICE || logonType == LOGON32_LOGON_NETWORK_CLEARTEXT)
             result = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
         else
-            result = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_PROVIDER_DEFAULT, ref hToken);
+            result = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, ref hToken);
         if (result == false)
             throw new RunasCsException("CreateProcessWithLogonWUacBypass: Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
 
@@ -505,21 +506,27 @@ public class RunasCs
                 success = LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, ref hTokenUacCheck);
                 if (success == false)
                     throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
-                if (AccessToken.IsLimitedUACToken(hTokenUacCheck)) {
-                    if (bypassUac){
+                if (AccessToken.IsLimitedUACToken(hTokenUacCheck, username, domainName, password))
+                {
+                    if (bypassUac)
+                    {
                         success = CreateProcessWithLogonWUacBypass(logonType, username, domainName, password, processPath, commandLine, ref startupInfo, out processInfo);
                         if (success == false)
                             throw new RunasCsException("CreateProcessWithLogonWUacBypass failed with " + Marshal.GetLastWin32Error());
                     }
-                    else {
-                        if (logonType == LOGON32_LOGON_INTERACTIVE || logonType == 11 /*CachedInteractive*/) { // only these logon types are filtered by UAC
-                            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
-                            Console.Out.Flush();
-                        }
+                    else
+                    {
+                        Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
+                        Console.Out.Flush();
                         success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
                         if (success == false)
                             throw new RunasCsException("CreateProcessWithLogonW logon type 2 failed with " + Marshal.GetLastWin32Error());
                     }
+                }
+                else {
+                    success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
+                    if (success == false)
+                        throw new RunasCsException("CreateProcessWithLogonW logon type 2 failed with " + Marshal.GetLastWin32Error());
                 }
                 CloseHandle(hTokenUacCheck);
             }
@@ -541,7 +548,7 @@ public class RunasCs
             if(success == false)
                 throw new RunasCsException("DuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error());
 
-            if (AccessToken.IsLimitedUACToken(hTokenDuplicate))
+            if (AccessToken.IsLimitedUACToken(hTokenDuplicate, username, domainName, password))
             {
                 if (bypassUac)
                 {
@@ -1194,6 +1201,9 @@ public static class AccessToken{
     private const int SECURITY_MANDATORY_PROTECTED_PROCESS_RID = 0x5000;
     private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
     private static readonly byte[] MANDATORY_LABEL_AUTHORITY = new byte[] { 0, 0, 0, 0, 0, 16 };
+    private const int LOGON32_PROVIDER_DEFAULT = 0;
+    private const int LOGON32_LOGON_INTERACTIVE = 2;
+    private const int LOGON32_LOGON_NETWORK = 3;
 
     [DllImport("advapi32.dll", SetLastError=true)]
     private static extern bool GetTokenInformation(IntPtr TokenHandle,TOKEN_INFORMATION_CLASS TokenInformationClass, IntPtr TokenInformation,uint TokenInformationLength,out uint ReturnLength);
@@ -1222,6 +1232,13 @@ public static class AccessToken{
 
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern int LookupPrivilegeValue(string lpsystemname, string lpname, [MarshalAs(UnmanagedType.Struct)] ref LUID lpLuid);
+
+    [DllImport("advapi32.dll", SetLastError = true, BestFitMapping = false, ThrowOnUnmappableChar = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool LogonUser([MarshalAs(UnmanagedType.LPStr)] string pszUserName, [MarshalAs(UnmanagedType.LPStr)] string pszDomain, [MarshalAs(UnmanagedType.LPStr)] string pszPassword, int dwLogonType, int dwLogonProvider, ref IntPtr phToken);
+    
+    [DllImport("Kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
 
     public enum TOKEN_INFORMATION_CLASS
     {
@@ -1414,14 +1431,15 @@ public static class AccessToken{
         return privileges;
     }
 
-    public static bool IsLimitedUACToken(IntPtr hToken) {
-        bool filtered = false;
+    public static bool IsLimitedUACToken(IntPtr hToken, string username, string domainName, string password) {
+        bool filtered = false, Result = false, Result2 = false;
         int TokenInfLength = 0;
-        bool Result;
+        IntPtr hTokenInteractive = IntPtr.Zero;
+        IntPtr hTokenNetwork = IntPtr.Zero;
         // first call gets lenght of TokenInformation
         Result = GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenElevation, IntPtr.Zero, TokenInfLength, out TokenInfLength);
         IntPtr tokenElevationPtr = Marshal.AllocHGlobal(TokenInfLength);
-        // then calls retrieving the reuired value
+        // then calls retrieving the required value
         Result = GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenElevation, tokenElevationPtr, TokenInfLength, out TokenInfLength);
         if (Result)
         {
@@ -1430,6 +1448,28 @@ public static class AccessToken{
                 filtered = true;
         }
         Marshal.FreeHGlobal(tokenElevationPtr);
+
+        // second iteration of token checks
+        if (filtered) {
+            Result = LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, ref hTokenInteractive);
+            Result2 = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, ref hTokenNetwork);
+            if (Result && Result2) {
+                if (AccessToken.GetTokenIntegrityLevel(hTokenInteractive) < AccessToken.GetTokenIntegrityLevel(hTokenNetwork))
+                    filtered = true;
+                else
+                    filtered = false;
+                CloseHandle(hTokenInteractive);
+                CloseHandle(hTokenNetwork);
+            }
+            else {
+                Int32 uacEnabled = (Int32)Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "EnableLUA", null);
+                if (uacEnabled == 1)
+                    filtered = true;
+                else
+                    filtered = false;
+            }
+        }
+
         return filtered;
     }
 
@@ -1684,7 +1724,7 @@ Examples:
     private static int DefaultCreateProcessFunction()
     {
         int createProcessFunction = 2;
-        IntPtr currentTokenHandle = System.Security.Principal.WindowsIdentity.GetCurrent().Token;        
+        IntPtr currentTokenHandle = WindowsIdentity.GetCurrent().Token;        
 
         List<string[]> privs = new List<string[]>();
         privs = AccessToken.getTokenPrivileges(currentTokenHandle);
@@ -1801,9 +1841,30 @@ Examples:
     }
 }
 
+class MainClass
+{
+
+    static void Main(string[] args)
+    {
+        string[] argsTest = new string[10];
+        argsTest[0] = "temp1";
+        argsTest[1] = "pwd";
+        argsTest[2] = "whoami /all";
+        //argsTest[2] = "ping -n 30 127.0.0.1";
+        argsTest[3] = "--function";
+        argsTest[4] = "1";
+        argsTest[5] = "--logon-type";
+        argsTest[6] = "2";
+        argsTest[7] = "--bypass-uac";
+        Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
+    }
+}
+
+/*
 class MainClass{
     static void Main(string[] args)
     {
         Console.Out.Write(RunasCsMainClass.RunasCsMain(args));
     }
 }
+*/
