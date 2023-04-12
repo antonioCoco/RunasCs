@@ -144,6 +144,24 @@ public class RunasCs
         SE_REGISTRY_WOW64_32KEY
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PROFILEINFO
+    {
+        public int dwSize;
+        public int dwFlags;
+        [MarshalAs(UnmanagedType.LPTStr)]
+        public String lpUserName;
+        [MarshalAs(UnmanagedType.LPTStr)]
+        public String lpProfilePath;
+        [MarshalAs(UnmanagedType.LPTStr)]
+        public String lpDefaultPath;
+        [MarshalAs(UnmanagedType.LPTStr)]
+        public String lpServerName;
+        [MarshalAs(UnmanagedType.LPTStr)]
+        public String lpPolicyPath;
+        public IntPtr hProfile;
+    }
+
     [DllImport("Kernel32.dll", SetLastError=true)]
     private static extern bool CloseHandle(IntPtr handle);
     
@@ -188,14 +206,20 @@ public class RunasCs
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DuplicateHandle(IntPtr hSourceProcessHandle, IntPtr hSourceHandle, IntPtr hTargetProcessHandle, out IntPtr lpTargetHandle, uint dwDesiredAccess, [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle, uint dwOptions);
 
-    [DllImport("userenv.dll", SetLastError=true)]
-    static extern bool CreateEnvironmentBlock( out IntPtr lpEnvironment, IntPtr hToken, bool bInherit );
+    [DllImport("userenv.dll", SetLastError=true, CharSet = CharSet.Auto)]
+    private static extern bool CreateEnvironmentBlock(out IntPtr lpEnvironment, IntPtr hToken, bool bInherit );
 
-    [DllImport("userenv.dll", SetLastError=true)]
-    static extern bool DestroyEnvironmentBlock(IntPtr lpEnvironment);
+    [DllImport("userenv.dll", SetLastError=true, CharSet = CharSet.Auto)]
+    private static extern bool DestroyEnvironmentBlock(IntPtr lpEnvironment);
 
-    [DllImport("userenv.dll", SetLastError=true, CharSet=CharSet.Auto)]
+    [DllImport("userenv.dll", SetLastError = true, CharSet = CharSet.Auto)]
     static extern bool GetUserProfileDirectory(IntPtr hToken, StringBuilder path, ref int dwSize);
+
+    [DllImport("userenv.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    private static extern bool LoadUserProfile(IntPtr hToken, ref PROFILEINFO lpProfileInfo);
+
+    [DllImport("userenv.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    private static extern bool UnloadUserProfile(IntPtr hToken, IntPtr hProfile);
 
     [DllImport("ws2_32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
     internal static extern IntPtr WSASocket([In] AddressFamily addressFamily, [In] SocketType socketType, [In] ProtocolType protocolType, [In] IntPtr protocolInfo, [In] uint group, [In] int flags);
@@ -283,101 +307,56 @@ public class RunasCs
 
         return socket;
     }
-    
-    private static int CountMultiStringBytes(IntPtr unicodeStrIntPtr)
-    {
-    // EnvironmentBlock format: Unicode-Str\0Unicode-Str\0...Unicode-Str\0\0.
-        int count = 0;
-        if(unicodeStrIntPtr == IntPtr.Zero)
-            return count;
-        while (true)
-        {
-            string str = Marshal.PtrToStringUni(unicodeStrIntPtr);
-            if (str.Length == 0)
-                break;
-            int stringLen = (str.Length + 1 /* char \0 */) * sizeof(char);
-            count = count + stringLen;
-            unicodeStrIntPtr = new IntPtr(unicodeStrIntPtr.ToInt64() + stringLen);
-        }
-        return count;
-    }
 
-    private static bool GetUserEnvironmentBlock(IntPtr hToken, out IntPtr lpEnvironment, out string warning)
+    private static void GetUserEnvironmentBlock(IntPtr hToken, string username, bool forceProfileCreation, out IntPtr lpEnvironment)
     {
-        bool success;
-        warning = "";
+        bool success = false;
         lpEnvironment = new IntPtr(0);
-
-        success = ImpersonateLoggedOnUser(hToken);
-        if(success == false) {
-            warning = "[*] Warning: ImpersonateLoggedOnUser failed with error code: " + Marshal.GetLastWin32Error();
-            return false;
-        }
-
-        try
-        {
-            success = CreateEnvironmentBlock(out lpEnvironment, hToken, false);
-            if (success == false)
+        PROFILEINFO profileInfo = new PROFILEINFO();
+        if (forceProfileCreation) {
+            profileInfo.dwSize = Marshal.SizeOf(profileInfo);
+            profileInfo.lpUserName = username;
+            success = LoadUserProfile(hToken, ref profileInfo);
+            if (success == false && Marshal.GetLastWin32Error() == 1314)
             {
-                warning = "[*] Warning: CreateEnvironmentBlock failed with error code: " + Marshal.GetLastWin32Error();
-                RevertToSelf();
-                return false;
+                Console.Out.WriteLine("[*] Warning: LoadUserProfile failed due to insufficient permissions");
+                Console.Out.Flush();
             }
+        }
+        ImpersonateLoggedOnUser(hToken);
+        try {
+            CreateEnvironmentBlock(out lpEnvironment, hToken, false);
         }
         catch {
-            warning = "[*] Warning: CreateEnvironmentBlock failed with error code: " + Marshal.GetLastWin32Error();
-            RevertToSelf();
-            return false;
+            // we land here in a very weird situation, just silently continue
+            success = false;
         }
-                
-        // obtain USERPROFILE value
-        int dwSize = 0;
-        GetUserProfileDirectory(hToken, null, ref dwSize);
-        StringBuilder profileDir = new StringBuilder(dwSize);
-        success = GetUserProfileDirectory(hToken, profileDir, ref dwSize);
-        if(success == false)
+        RevertToSelf();
+        if (forceProfileCreation && success) UnloadUserProfile(hToken, profileInfo.hProfile);
+    }
+
+    private static bool IsUserProfileDirectoryCreated(string username, string password, string domainName, int logonType) {
+        bool result = false;
+        IntPtr hToken = IntPtr.Zero;
+        result = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
+        if (result == false)
+            throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
+        ImpersonateLoggedOnUser(hToken);
+        try
         {
-            warning = "[*] Warning: GetUserProfileDirectory failed with error code: " + Marshal.GetLastWin32Error();
-            RevertToSelf();
-            return false;
+            // obtain USERPROFILE value
+            int dwSize = 0;
+            GetUserProfileDirectory(hToken, null, ref dwSize);
+            StringBuilder profileDir = new StringBuilder(dwSize);
+            result = GetUserProfileDirectory(hToken, profileDir, ref dwSize);
         }
-
-        int count = CountMultiStringBytes(lpEnvironment);
-
-        // copy raw environment to a managed array and free the unmanaged block
-        byte[] managedArray = new byte[count];
-        Marshal.Copy(lpEnvironment, managedArray, 0, count);
-        DestroyEnvironmentBlock(lpEnvironment);
-
-        string environmentString = Encoding.Unicode.GetString(managedArray);
-        string[] envVariables = environmentString.Split((char)0x00);
-
-        // Construct new user environment. Currently only USERPROFILE is replaced.
-        // Other replacements could be inserted here.
-        List<byte> newEnv = new List<byte>();
-        foreach( string variable in envVariables ) {
-
-            if( variable.StartsWith("USERPROFILE=") ) {
-                newEnv.AddRange(Encoding.Unicode.GetBytes("USERPROFILE=" + profileDir.ToString() + "\u0000"));
-            } else {
-                newEnv.AddRange(Encoding.Unicode.GetBytes(variable + "\u0000"));
-            }
+        catch {
+            // we land here in a very weird situation, just silently continue
+            result = true;
         }
-
-        // finalize EnvironmentBlock. Desired end: \0\0
-        newEnv.Add(0x00);
-        managedArray = newEnv.ToArray();
-        lpEnvironment = Marshal.AllocHGlobal(managedArray.Length);
-        Marshal.Copy(managedArray, 0, lpEnvironment, managedArray.Length);
-    
-        success = RevertToSelf();
-        if(success == false)
-        {
-            warning = "[*] Warning: RevertToSelf failed with error code: " + Marshal.GetLastWin32Error();
-            return false;
-        }
-
-        return true;
+        RevertToSelf();
+        CloseHandle(hToken);
+        return result;
     }
 
     // UAC bypass discussed in this UAC quiz tweet --> https://twitter.com/splinter_code/status/1458054161472307204
@@ -449,22 +428,22 @@ public class RunasCs
         this.stationDaclObj = new WindowStationDACL();
         ProcessInformation processInfo = new ProcessInformation();
 
-        if(processTimeout > 0) {
-            if(!CreateAnonymousPipeEveryoneAccess(ref this.hOutputReadTmp, ref this.hOutputWrite)) {
+        if (processTimeout > 0) {
+            if (!CreateAnonymousPipeEveryoneAccess(ref this.hOutputReadTmp, ref this.hOutputWrite)) {
                 throw new RunasCsException("CreatePipe failed with error code: " + Marshal.GetLastWin32Error());
             }
             //1998's code. Old but gold https://support.microsoft.com/en-us/help/190351/how-to-spawn-console-processes-with-redirected-standard-handles
-            if(!DuplicateHandle(hCurrentProcess, this.hOutputWrite, hCurrentProcess, out this.hErrorWrite, 0, true, DUPLICATE_SAME_ACCESS)) {
+            if (!DuplicateHandle(hCurrentProcess, this.hOutputWrite, hCurrentProcess, out this.hErrorWrite, 0, true, DUPLICATE_SAME_ACCESS)) {
                 throw new RunasCsException("DuplicateHandle stderr write pipe failed with error code: " + Marshal.GetLastWin32Error());
             }
-            if(!DuplicateHandle(hCurrentProcess, this.hOutputReadTmp, hCurrentProcess, out this.hOutputRead, 0, false, DUPLICATE_SAME_ACCESS)) {
+            if (!DuplicateHandle(hCurrentProcess, this.hOutputReadTmp, hCurrentProcess, out this.hOutputRead, 0, false, DUPLICATE_SAME_ACCESS)) {
                 throw new RunasCsException("DuplicateHandle stdout read pipe failed with error code: " + Marshal.GetLastWin32Error());
             }
             CloseHandle(this.hOutputReadTmp);
             this.hOutputReadTmp = IntPtr.Zero;
 
             UInt32 PIPE_NOWAIT = 0x00000001;
-            if(!SetNamedPipeHandleState(this.hOutputRead, ref PIPE_NOWAIT, IntPtr.Zero, IntPtr.Zero)) {
+            if (!SetNamedPipeHandleState(this.hOutputRead, ref PIPE_NOWAIT, IntPtr.Zero, IntPtr.Zero)) {
                 throw new RunasCsException("SetNamedPipeHandleState failed with error code: " + Marshal.GetLastWin32Error());
             }
 
@@ -474,7 +453,7 @@ public class RunasCs
             processPath = Environment.GetEnvironmentVariable("ComSpec");
             commandLine = "/c " + cmd;
 
-        } else if( remote != null ) {
+        } else if (remote != null) {
             this.socket = ConnectRemote(remote);
             startupInfo.dwFlags = Startf_UseStdHandles;
             startupInfo.hStdInput = this.socket;
@@ -482,8 +461,13 @@ public class RunasCs
             startupInfo.hStdError = this.socket;
         }
 
-        desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username, logonType);        
+        desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username, logonType);
         startupInfo.lpDesktop = desktopName;
+
+        if (logonType != LOGON32_LOGON_NEW_CREDENTIALS && !createUserProfile && !IsUserProfileDirectoryCreated(username, password, domainName, logonType)) {
+            Console.Out.WriteLine("[*] Warning: User profile directory for user " + username + " does not exists. Probably this user never logged on on this machine.");
+            Console.Out.Flush();
+        }
 
         if(createProcessFunction == 2){
             if (logonType != LOGON32_LOGON_INTERACTIVE && logonType != LOGON32_LOGON_NEW_CREDENTIALS && !bypassUac) {
@@ -566,36 +550,29 @@ public class RunasCs
                 bypassUac = false; // we reset this flag as it's not considered when token is not limited
 
             if (!bypassUac) {
-                string warning;
-                IntPtr lpEnvironment;
-                // obtain environmentBlock for desired user
-                success = GetUserEnvironmentBlock(hTokenDuplicate, out lpEnvironment, out warning);
-                if (success == false)
-                {
-                    //Console.Out.WriteLine(warning); // this is a debug message
-                    Console.Out.WriteLine(String.Format("[*] Warning: Unable to obtain environment for user '{0}'. Environment variables of created process might be incorrect.", username));
-                    Console.Out.Flush();
-                }
-
                 // enable all privileges assigned to the token
                 if (logonType != LOGON32_LOGON_NETWORK && logonType != LOGON32_LOGON_NETWORK_CLEARTEXT)
                     AccessToken.EnableAllPrivileges(hTokenDuplicate);
 
                 if (createProcessFunction == 0)
                 {
+                    // obtain environmentBlock for desired user
+                    IntPtr lpEnvironment = IntPtr.Zero;
+                    GetUserEnvironmentBlock(hTokenDuplicate, username, createUserProfile, out lpEnvironment);
                     //the inherit handle flag must be true otherwise the pipe handles won't be inherited and the output won't be retrieved
                     success = CreateProcessAsUser(hTokenDuplicate, processPath, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo);
                     if (success == false)
                         throw new RunasCsException("CreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error());
+                    if (lpEnvironment != IntPtr.Zero) DestroyEnvironmentBlock(lpEnvironment);
                 }
                 else if (createProcessFunction == 1)
                 {
-                    success = CreateProcessWithTokenW(hTokenDuplicate, logonFlags, processPath, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, null, ref startupInfo, out processInfo);
+                    success = CreateProcessWithTokenW(hTokenDuplicate, logonFlags, processPath, commandLine, CREATE_NO_WINDOW, IntPtr.Zero, null, ref startupInfo, out processInfo);
                     if (success == false)
                         throw new RunasCsException("CreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error());
                 }
 
-                if (lpEnvironment != IntPtr.Zero) DestroyEnvironmentBlock(lpEnvironment);
+                
             }
             CloseHandle(hToken);
             CloseHandle(hTokenDuplicate);
@@ -1596,11 +1573,8 @@ Optional arguments:
                             creation of the user profile on the machine.
                             This will ensure the process will have the
                             environment variables correctly set.
-                            NOTE: this will leave some forensics traces
-                            behind creating the user profile directory.
-                            Compatible only with -f flags:
-                                1 - CreateProcessWithTokenW
-                                2 - CreateProcessWithLogonW
+                            NOTE: in some cases, this will leave some forensics
+                            traces behind creating the user profile directory.
     -b, --bypass-uac     
                             if this flag is specified RunasCs will try a UAC
                             bypass to spawn a process without token limitation
@@ -1844,15 +1818,15 @@ class MainClass
     static void Main(string[] args)
     {
         string[] argsTest = new string[10];
-        argsTest[0] = "temp1";
+        argsTest[0] = "temp8";
         argsTest[1] = "pwd";
-        argsTest[2] = "whoami /all";
+        argsTest[2] = "cmd /c set";
         //argsTest[2] = "ping -n 30 127.0.0.1";
         argsTest[3] = "--function";
         argsTest[4] = "0";
         argsTest[5] = "--logon-type";
         argsTest[6] = "8";
-        //argsTest[7] = "--bypass-uac";
+        //argsTest[7] = "--create-profile";
         Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
     }
 }
