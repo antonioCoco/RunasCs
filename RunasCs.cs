@@ -34,6 +34,8 @@ public class RunasCs
     private const uint CREATE_NO_WINDOW = 0x08000000;
     private const uint CREATE_SUSPENDED = 0x00000004;
     private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
+    private const uint DETACHED_PROCESS = 0x00000008;
+    private const uint CREATE_NEW_CONSOLE = 0x00000010;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
     private const uint DACL_SECURITY_INFORMATION = 0x00000004;
     private const UInt32 LOGON_WITH_PROFILE = 1;
@@ -368,7 +370,7 @@ public class RunasCs
         IntPtr hToken = IntPtr.Zero, hTokenDuplicate = IntPtr.Zero;
         result = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
         if (result == false)
-            throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
+            throw new RunasCsException("LogonUser failed with error code: " + Marshal.GetLastWin32Error());
         ImpersonateLoggedOnUserWithProperIL(hToken, out hTokenDuplicate);
         try
         {
@@ -399,7 +401,7 @@ public class RunasCs
         else
             result = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_PROVIDER_DEFAULT, ref hToken);
         if (result == false)
-            throw new RunasCsException("CreateProcessWithLogonWUacBypass: Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
+            throw new RunasCsException("CreateProcessWithLogonWUacBypass: LogonUser failed with error code: " + Marshal.GetLastWin32Error());
 
         // here we set the IL of the new token equal to our current process IL. Needed or seclogon will fail.
         AccessToken.SetTokenIntegrityLevel(hToken, AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token));
@@ -518,7 +520,7 @@ public class RunasCs
             else
                 success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
             if (success == false)
-                throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
+                throw new RunasCsException("LogonUser failed with error code: " + Marshal.GetLastWin32Error());
             success = DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenImpersonation, ref hTokenDuplicate);
             if (success == false)
                 throw new RunasCsException("DuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error());
@@ -569,7 +571,7 @@ public class RunasCs
                     // we use the logon type 2 - Interactive because CreateProcessWithLogonW internally use this logon type for the logon 
                     success = LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, ref hTokenUacCheck);
                     if (success == false)
-                        throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
+                        throw new RunasCsException("LogonUser failed with error code: " + Marshal.GetLastWin32Error());
                     if (AccessToken.IsLimitedUACToken(hTokenUacCheck, username, domainName, password))
                     {
                         if (bypassUac)
@@ -605,7 +607,7 @@ public class RunasCs
                 else
                     success = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
                 if (success == false)
-                    throw new RunasCsException("Wrong Credentials. LogonUser failed with error code: " + Marshal.GetLastWin32Error());
+                    throw new RunasCsException("LogonUser failed with error code: " + Marshal.GetLastWin32Error());
                 success = DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityDelegation, TokenPrimary, ref hTokenDuplicate);
                 if (success == false)
                     throw new RunasCsException("DuplicateTokenEx failed with error code: " + Marshal.GetLastWin32Error());
@@ -1922,11 +1924,12 @@ class MainClass
     static void Main(string[] args)
     {
         string[] argsTest = new string[10];
-        argsTest[0] = "temp10";
-        argsTest[1] = "pwd";
-        //argsTest[2] = "C:\\Windows\\system32\\whoami /all";
-        //argsTest[2] = "C:\\Windows\\system32\\ping.exe -n 120 127.0.0.1";
-        argsTest[2] = "cmd.exe /c echo i was here > C:\\Windows\\mediumil.txt";
+        argsTest[0] = "temp2";
+        argsTest[1] = "pwdd";
+        argsTest[2] = "cmd.exe";
+        argsTest[2] = "C:\\Windows\\system32\\whoami /all";
+        //argsTest[2] = "cmd /c C:\\Windows\\system32\\ping.exe -n 120 127.0.0.1";
+        //argsTest[2] = "cmd.exe /c echo i was here && ping.exe -n 30 127.0.0.1 > C:\\Windows\\mediumil.txt";
         argsTest[3] = "--function";
         argsTest[4] = "2";
         argsTest[5] = "--logon-type";
