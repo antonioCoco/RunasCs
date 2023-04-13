@@ -14,6 +14,7 @@ public class RunasCsException : Exception
 
     private static string GetWin32ErrorString()
     {
+        Console.Out.Flush();
         string errorMessage = new Win32Exception(Marshal.GetLastWin32Error()).Message;
         return errorMessage;
     }
@@ -44,8 +45,6 @@ public class RunasCs
     private const uint CREATE_NO_WINDOW = 0x08000000;
     private const uint CREATE_SUSPENDED = 0x00000004;
     private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
-    private const uint DETACHED_PROCESS = 0x00000008;
-    private const uint CREATE_NEW_CONSOLE = 0x00000010;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
     private const uint DACL_SECURITY_INFORMATION = 0x00000004;
     private const UInt32 LOGON_WITH_PROFILE = 1;
@@ -357,10 +356,7 @@ public class RunasCs
             profileInfo.lpUserName = username;
             success = LoadUserProfile(hToken, ref profileInfo);
             if (success == false && Marshal.GetLastWin32Error() == 1314)
-            {
                 Console.Out.WriteLine("[*] Warning: LoadUserProfile failed due to insufficient permissions");
-                Console.Out.Flush();
-            }
         }
         ImpersonateLoggedOnUserWithProperIL(hToken, out hTokenDuplicate);
         try {
@@ -515,10 +511,7 @@ public class RunasCs
         startupInfo.lpDesktop = desktopName;
 
         if (logonType != LOGON32_LOGON_NEW_CREDENTIALS && !createUserProfile && !IsUserProfileDirectoryCreated(username, password, domainName, logonType))
-        {
             Console.Out.WriteLine("[*] Warning: User profile directory for user " + username + " does not exists. Probably this user never logged on on this machine.");
-            Console.Out.Flush();
-        }
 
         if (remoteImpersonation)
         {
@@ -563,10 +556,8 @@ public class RunasCs
             if (createProcessFunction == 2)
             {
                 if (logonType != LOGON32_LOGON_INTERACTIVE && logonType != LOGON32_LOGON_NEW_CREDENTIALS && !bypassUac)
-                {
                     Console.Out.WriteLine("[*] Warning: Using function CreateProcessWithLogonW is not compatible with logon type " + logonType.ToString() + ". Reverting to logon type Interactive (2)...");
-                    Console.Out.Flush();
-                }
+
                 if (logonType == LOGON32_LOGON_NEW_CREDENTIALS)
                 {
                     if (domainName == "")
@@ -593,7 +584,6 @@ public class RunasCs
                         else
                         {
                             Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
-                            Console.Out.Flush();
                             success = CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
                             if (success == false)
                                 throw new RunasCsException("CreateProcessWithLogonW logon type 2", true);
@@ -635,7 +625,6 @@ public class RunasCs
                         if (logonType == LOGON32_LOGON_INTERACTIVE || logonType == 11 /*CachedInteractive*/)
                         { // only these logon types are filtered by UAC
                             Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
-                            Console.Out.Flush();
                         }
                     }
                 }
@@ -672,8 +661,8 @@ public class RunasCs
                 CloseHandle(hTokenDuplicate);
             }
         }
-
-        if(processTimeout > 0) {
+        Console.Out.Flush();  // flushing console before waiting for child process execution
+        if (processTimeout > 0) {
             CloseHandle(this.hOutputWrite);
             CloseHandle(this.hErrorWrite);
             this.hOutputWrite = IntPtr.Zero;
@@ -681,7 +670,10 @@ public class RunasCs
             WaitForSingleObject(processInfo.process, processTimeout);
             output += ReadOutputFromPipe(this.hOutputRead);
         } else {
-            output += "[+] Running in session " + sessionId.ToString() + " with process function " + GetProcessFunction(createProcessFunction) + "\r\n";
+            if(remoteImpersonation)
+                output += "[+] Running in session " + sessionId.ToString() + " with process function 'Remote Impersonation' \r\n";
+            else
+                output += "[+] Running in session " + sessionId.ToString() + " with process function " + GetProcessFunction(createProcessFunction) + "\r\n";
             output += "[+] Using Station\\Desktop: " + desktopName + "\r\n";
             output += "[+] Async process '" + commandLine + "' with pid " + processInfo.processId + " created and left in background.\r\n";
         }
@@ -1931,7 +1923,7 @@ class MainClass
     {
         string[] argsTest = new string[10];
         argsTest[0] = "temp2";
-        argsTest[1] = "pwdd";
+        argsTest[1] = "pwd";
         argsTest[2] = "cmd.exe";
         argsTest[2] = "C:\\Windows\\system32\\whoami /all";
         //argsTest[2] = "cmd /c C:\\Windows\\system32\\ping.exe -n 120 127.0.0.1";
@@ -1941,8 +1933,8 @@ class MainClass
         argsTest[5] = "--logon-type";
         argsTest[6] = "8";
         argsTest[7] = "--remote-impersonation";
-        //argsTest[8] = "-t";
-        //argsTest[9] = "0";
+        argsTest[8] = "-t";
+        argsTest[9] = "0";
         //argsTest[7] = "--create-profile";
         //argsTest[8] = "--remote";
         //argsTest[9] = "127.0.0.1:3001";
