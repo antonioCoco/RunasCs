@@ -405,7 +405,7 @@ public class RunasCs
 
     // UAC bypass discussed in this UAC quiz tweet --> https://twitter.com/splinter_code/status/1458054161472307204
     // thanks @winlogon0 for the implementation --> https://github.com/AltF5/MediumToHighIL_Test/blob/main/TestCode2.cs
-    private bool CreateProcessWithLogonWUacBypass(int logonType, string username, string domainName, string password, string processPath, string commandLine, ref STARTUPINFO startupInfo, out ProcessInformation processInfo) {
+    private bool CreateProcessWithLogonWUacBypass(int logonType, uint logonFlags, string username, string domainName, string password, string processPath, string commandLine, ref STARTUPINFO startupInfo, out ProcessInformation processInfo) {
         bool result = false;
         IntPtr hToken = new IntPtr(0);
         // the below logon types are not filtered by UAC, we allow login with them. Otherwise stick with NetworkCleartext
@@ -425,7 +425,7 @@ public class RunasCs
         {
             if (domainName == "") // fixing bugs in seclogon ...
                 domainName = ".";
-            result = CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
+            result = CreateProcessWithLogonW(username, domainName, password, logonFlags | LOGON_NETCREDENTIALS_ONLY, processPath, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo);
         }
         CloseHandle(hToken);
         return result;
@@ -550,9 +550,9 @@ public class RunasCs
         }
         else {
             bool userProfileExists;
-            // we load the user profile only if it has been already created
             userProfileExists = IsUserProfileCreated(username, password, domainName, logonType);
-            if (userProfileExists)
+            // we load the user profile only if it has been already created or the creation is forced from the flag --force-profile
+            if (userProfileExists || forceUserProfileCreation)
                 logonFlags = LOGON_WITH_PROFILE;
             if (logonType != LOGON32_LOGON_NEW_CREDENTIALS && !forceUserProfileCreation && !userProfileExists)
                 Console.Out.WriteLine("[*] Warning: User profile directory for user " + username + " does not exists. Probably this user never logged on on this machine.");
@@ -578,19 +578,19 @@ public class RunasCs
                     {
                         if (bypassUac)
                         {
-                            if (!CreateProcessWithLogonWUacBypass(logonType, username, domainName, password, null, commandLine, ref startupInfo, out processInfo))
+                            if (!CreateProcessWithLogonWUacBypass(logonType, logonFlags, username, domainName, password, null, commandLine, ref startupInfo, out processInfo))
                                 throw new RunasCsException("CreateProcessWithLogonWUacBypass", true);
                         }
                         else
                         {
                             Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
-                            if (!CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo))
+                            if (!CreateProcessWithLogonW(username, domainName, password, logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo))
                                 throw new RunasCsException("CreateProcessWithLogonW logon type 2", true);
                         }
                     }
                     else
                     {
-                        if (!CreateProcessWithLogonW(username, domainName, password, (UInt32)logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo))
+                        if (!CreateProcessWithLogonW(username, domainName, password, logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo))
                             throw new RunasCsException("CreateProcessWithLogonW logon type 2", true);
                     }
                     CloseHandle(hTokenUacCheck);
@@ -608,7 +608,7 @@ public class RunasCs
                 {
                     if (bypassUac)
                     {
-                        if (!CreateProcessWithLogonWUacBypass(logonType, username, domainName, password, null, commandLine, ref startupInfo, out processInfo))
+                        if (!CreateProcessWithLogonWUacBypass(logonType, logonFlags, username, domainName, password, null, commandLine, ref startupInfo, out processInfo))
                             throw new RunasCsException("CreateProcessWithLogonWUacBypass", true);
                     }
                     else
