@@ -24,7 +24,7 @@ public class RunasCsException : Exception
 
     public RunasCsException(string message) : base(error_string + message) { }
 
-    public RunasCsException(string message, bool returnWin32Error) : base(error_string + message + " failed with error code: " + GetWin32ErrorString()) {}
+    public RunasCsException(string win32FunctionName, bool returnWin32Error) : base(error_string + win32FunctionName + " failed with error code: " + GetWin32ErrorString()) {}
 
 }
 
@@ -213,7 +213,7 @@ public class RunasCs
     private static extern bool CreateProcessAsUser(IntPtr hToken,string lpApplicationName,string lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes,bool bInheritHandles,uint dwCreationFlags,IntPtr lpEnvironment,string lpCurrentDirectory,ref STARTUPINFO lpStartupInfo,out ProcessInformation lpProcessInformation);  
 
     [DllImport("advapi32", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern bool CreateProcessWithTokenW(IntPtr hToken, int dwLogonFlags, string lpApplicationName, string lpCommandLine, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, [In] ref STARTUPINFO lpStartupInfo, out ProcessInformation lpProcessInformation);
+    private static extern bool CreateProcessWithTokenW(IntPtr hToken, uint dwLogonFlags, string lpApplicationName, string lpCommandLine, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, [In] ref STARTUPINFO lpStartupInfo, out ProcessInformation lpProcessInformation);
 
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern uint SetSecurityInfo(IntPtr handle, SE_OBJECT_TYPE ObjectType, uint SecurityInfo, IntPtr psidOwner, IntPtr psidGroup, IntPtr pDacl, IntPtr pSacl);
@@ -342,13 +342,13 @@ public class RunasCs
         return result;
     }
 
-    private static void GetUserEnvironmentBlock(IntPtr hToken, string username, bool forceProfileCreation, out IntPtr lpEnvironment)
+    private static void GetUserEnvironmentBlock(IntPtr hToken, string username, bool forceProfileCreation, bool userProfileExists, out IntPtr lpEnvironment)
     {
         bool result = false;
         lpEnvironment = new IntPtr(0);
         PROFILEINFO profileInfo = new PROFILEINFO();
         IntPtr hTokenDuplicate;
-        if (forceProfileCreation) {
+        if (forceProfileCreation || userProfileExists) {
             profileInfo.dwSize = Marshal.SizeOf(profileInfo);
             profileInfo.lpUserName = username;
             result = LoadUserProfile(hToken, ref profileInfo);
@@ -360,7 +360,6 @@ public class RunasCs
             CreateEnvironmentBlock(out lpEnvironment, hToken, false);
         }
         catch {
-            // we land here in a very weird situation, just silently continue
             result = false;
         }
         RevertToSelf();
@@ -368,10 +367,12 @@ public class RunasCs
         if (forceProfileCreation && result) UnloadUserProfile(hToken, profileInfo.hProfile);
     }
 
-    private static bool IsUserProfileDirectoryCreated(string username, string password, string domainName, int logonType) {
+    private static bool IsUserProfileCreated(string username, string password, string domainName, int logonType) {
         bool result = false;
         IntPtr hToken = IntPtr.Zero, hTokenDuplicate = IntPtr.Zero;
-        result = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
+        int logonProvider = LOGON32_PROVIDER_DEFAULT;
+        if (logonType == LOGON32_LOGON_NEW_CREDENTIALS) logonProvider = LOGON32_PROVIDER_WINNT50;
+        result = LogonUser(username, domainName, password, logonType, logonProvider, ref hToken);
         if (result == false)
             throw new RunasCsException("LogonUser", true);
         ImpersonateLoggedOnUserWithProperIL(hToken, out hTokenDuplicate);
@@ -384,8 +385,7 @@ public class RunasCs
             result = GetUserProfileDirectory(hToken, profileDir, ref dwSize);
         }
         catch {
-            // we land here in a very weird situation, just silently continue
-            result = true;
+            result = false;
         }
         RevertToSelf();
         CloseHandle(hToken);
@@ -451,7 +451,7 @@ public class RunasCs
         this.stationDaclObj = null;
     }
 
-    public string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction, string[] remote, bool createUserProfile, bool bypassUac, bool remoteImpersonation)
+    public string RunAs(string username, string password, string cmd, string domainName, uint processTimeout, int logonType, int createProcessFunction, string[] remote, bool forceUserProfileCreation, bool bypassUac, bool remoteImpersonation)
     /*
         int createProcessFunction:
             0: CreateProcessAsUserW();
@@ -459,22 +459,19 @@ public class RunasCs
             2: CreateProcessWithLogonW();
     */
     {
-        bool result;
         string output = "";
-        string desktopName = "";
+        string desktopName;
+        uint logonFlags = 0;
+        bool userProfileExists;
+        IntPtr hCurrentProcess = Process.GetCurrentProcess().Handle;
         string commandLine = cmd;
         int sessionId = System.Diagnostics.Process.GetCurrentProcess().SessionId;
-        int logonFlags = (createUserProfile) ? (int)LOGON_WITH_PROFILE : 0;
-
-        IntPtr hCurrentProcess = Process.GetCurrentProcess().Handle;
+        int logonProvider = LOGON32_PROVIDER_DEFAULT;
 
         STARTUPINFO startupInfo = new STARTUPINFO();
         startupInfo.cb = Marshal.SizeOf(startupInfo);
         startupInfo.lpReserved = null;
-
-        this.stationDaclObj = new WindowStationDACL();
         ProcessInformation processInfo = new ProcessInformation();
-
         if (processTimeout > 0) {
             if (!CreateAnonymousPipeEveryoneAccess(ref this.hOutputReadTmp, ref this.hOutputWrite)) {
                 throw new RunasCsException("CreatePipe", true);
@@ -504,22 +501,23 @@ public class RunasCs
             startupInfo.hStdError = this.socket;
         }
 
+        this.stationDaclObj = new WindowStationDACL();
         desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username, logonType);
         startupInfo.lpDesktop = desktopName;
-
-        if (logonType != LOGON32_LOGON_NEW_CREDENTIALS && !createUserProfile && !IsUserProfileDirectoryCreated(username, password, domainName, logonType))
+        // we load the user profile only if it has been already created
+        userProfileExists= IsUserProfileCreated(username, password, domainName, logonType);
+        if (userProfileExists)
+            logonFlags = LOGON_WITH_PROFILE;
+        if (logonType != LOGON32_LOGON_NEW_CREDENTIALS && !forceUserProfileCreation && !userProfileExists)
             Console.Out.WriteLine("[*] Warning: User profile directory for user " + username + " does not exists. Probably this user never logged on on this machine.");
+        if (logonType == LOGON32_LOGON_NEW_CREDENTIALS) logonProvider = LOGON32_PROVIDER_WINNT50;
 
         if (remoteImpersonation)
         {
             IntPtr hToken = new IntPtr(0);
             IntPtr hTokenDuplicate = new IntPtr(0);
             IntPtr lpEnvironment = IntPtr.Zero;
-            if (logonType == LOGON32_LOGON_NEW_CREDENTIALS)
-                result = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_WINNT50, ref hToken);
-            else
-                result = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
-            if (result == false)
+            if (!LogonUser(username, domainName, password, logonType, logonProvider, ref hToken))
                 throw new RunasCsException("LogonUser", true);
             if (!DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenImpersonation, ref hTokenDuplicate))
                 throw new RunasCsException("DuplicateTokenEx", true);
@@ -527,13 +525,15 @@ public class RunasCs
                 AccessToken.SetTokenIntegrityLevel(hTokenDuplicate, AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token));
             // enable all privileges assigned to the token
             AccessToken.EnableAllPrivileges(hTokenDuplicate, logonType);
-            GetUserEnvironmentBlock(hTokenDuplicate, username, createUserProfile, out lpEnvironment);
+            GetUserEnvironmentBlock(hTokenDuplicate, username, false, false, out lpEnvironment);
             if (!CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo))
                 throw new RunasCsException("CreateProcess", true);
             IntPtr hTokenProcess = IntPtr.Zero;
             if (!OpenProcessToken(processInfo.process, AccessToken.TOKEN_ALL_ACCESS, out hTokenProcess))
                 throw new RunasCsException("OpenProcessToken", true);
             AccessToken.SetTokenIntegrityLevel(hTokenProcess, AccessToken.GetTokenIntegrityLevel(hTokenDuplicate));
+            // this will solve some permissions errors when attempting to get the current process handle while impersonating
+            SetSecurityInfo(processInfo.process, SE_OBJECT_TYPE.SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
             // this will solve some issues, e.g. Access Denied errors when running whoami.exe
             SetSecurityInfo(hTokenProcess, SE_OBJECT_TYPE.SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
             if (!SetThreadToken(ref processInfo.thread, hTokenDuplicate))
@@ -587,15 +587,10 @@ public class RunasCs
             {
                 IntPtr hToken = new IntPtr(0);
                 IntPtr hTokenDuplicate = new IntPtr(0);
-                if (logonType == LOGON32_LOGON_NEW_CREDENTIALS)
-                    result = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_WINNT50, ref hToken);
-                else
-                    result = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
-                if (result == false)
+                if (!LogonUser(username, domainName, password, logonType, logonProvider, ref hToken))
                     throw new RunasCsException("LogonUser", true);
                 if (!DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityDelegation, TokenPrimary, ref hTokenDuplicate))
                     throw new RunasCsException("DuplicateTokenEx", true);
-
                 if (AccessToken.IsLimitedUACToken(hTokenDuplicate, username, domainName, password))
                 {
                     if (bypassUac)
@@ -613,7 +608,6 @@ public class RunasCs
                 }
                 else
                     bypassUac = false; // we reset this flag as it's not considered when token is not limited
-
                 if (!bypassUac)
                 {
                     // enable all privileges assigned to the token
@@ -622,7 +616,7 @@ public class RunasCs
                     {
                         // obtain environmentBlock for desired user
                         IntPtr lpEnvironment = IntPtr.Zero;
-                        GetUserEnvironmentBlock(hTokenDuplicate, username, createUserProfile, out lpEnvironment);
+                        GetUserEnvironmentBlock(hTokenDuplicate, username, forceUserProfileCreation, userProfileExists, out lpEnvironment);
                         //the inherit handle flag must be true otherwise the pipe handles won't be inherited and the output won't be retrieved
                         if (!CreateProcessAsUser(hTokenDuplicate, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo))
                             throw new RunasCsException("CreateProcessAsUser", true);
@@ -907,9 +901,8 @@ public class WindowStationDACL{
             }
         }
         else{
-            string error = "The username " + fqan + " has not been found.\r\n";
-            error += "[-] LookupAccountName failed with error code " + Marshal.GetLastWin32Error();
-            throw new RunasCsException(error);
+            string error = "The username " + fqan + " has not been found. ";
+            throw new RunasCsException(error + "LookupAccountName", true);
         }
         if (err == 0)
         {
@@ -917,9 +910,8 @@ public class WindowStationDACL{
             Marshal.Copy(Sid, 0, userSid, (int)cbSid);
         }
         else{
-            string error = "The username " + fqan + " has not been found.\r\n";
-            error += "[-] LookupAccountName failed with error code " + Marshal.GetLastWin32Error();
-            throw new RunasCsException(error);
+            string error = "The username " + fqan + " has not been found. ";
+            throw new RunasCsException(error + "LookupAccountName", true);
         }
         return userSid;
     }
@@ -1610,12 +1602,12 @@ public static class RunasCsMainClass
 RunasCs v1.4 - @splinter_code
 
 Usage:
-    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout] [--create-profile] [--bypass-uac]
+    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout] [--force-profile] [--bypass-uac]
 
 Description:
     RunasCs is an utility to run specific processes under a different user account
     by specifying explicit credentials. In contrast to the default runas.exe command
-    it supports different logon types and crateProcess functions to be used, depending
+    it supports different logon types and CreateProcess* functions to be used, depending
     on your current permissions. Furthermore it allows input/output redirection (even
     to remote hosts) and you can specify the password directly on the command line.
 
@@ -1648,13 +1640,12 @@ Optional arguments:
                             If you set 0 no output will be retrieved and an 
                             async process will be created.
                             Default: ""120000""
-    -p, --create-profile
+    -p, --force-profile
                             if this flag is specified RunasCs will force the
                             creation of the user profile on the machine.
                             This will ensure the process will have the
                             environment variables correctly set.
-                            NOTE: in some cases, this will leave some forensics
-                            traces behind creating the user profile directory.
+                            NOTE: This will create the user profile directory.
     -b, --bypass-uac     
                             if this flag is specified RunasCs will try a UAC
                             bypass to spawn a process without token limitation
@@ -1776,19 +1767,16 @@ Examples:
     {
         int createProcessFunction = 2;
         IntPtr currentTokenHandle = WindowsIdentity.GetCurrent().Token;        
-
         List<string[]> privs = new List<string[]>();
         privs = AccessToken.GetTokenPrivileges(currentTokenHandle);
-
         bool SeAssignPrimaryTokenPrivilegeAssigned = false;
         bool SeImpersonatePrivilegeAssigned = false;
-
         foreach (string[] s in privs)
         {
             string privilege = s[0];
-            if(privilege == "SeAssignPrimaryTokenPrivilege")
+            if(privilege == "SeAssignPrimaryTokenPrivilege" && AccessToken.GetTokenIntegrityLevel(currentTokenHandle) >= AccessToken.IntegrityLevel.Medium)
                 SeAssignPrimaryTokenPrivilegeAssigned = true;
-            if(privilege == "SeImpersonatePrivilege")
+            if(privilege == "SeImpersonatePrivilege" && AccessToken.GetTokenIntegrityLevel(currentTokenHandle) >= AccessToken.IntegrityLevel.High)
                 SeImpersonatePrivilegeAssigned = true;
         }
         if (SeAssignPrimaryTokenPrivilegeAssigned)
@@ -1796,26 +1784,24 @@ Examples:
         else 
             if (SeImpersonatePrivilegeAssigned)
                 createProcessFunction = 1;
-
         return createProcessFunction;
     }
 
     public static string RunasCsMain(string[] args)
     {
-        string output = "";
         if (args.Length == 1 && HelpRequired(args[0]))
         {
             Console.Out.Write(help);
             return "";
         }
-
+        string output = "";
         List<string> positionals = new List<string>();
         string username, password, cmd, domain;
         username = password = cmd = domain = string.Empty;
         string[] remote = null;
         uint processTimeout = 120000;
         int logonType = 8, createProcessFunction = DefaultCreateProcessFunction();
-        bool createUserProfile = false, bypassUac = false, remoteImpersonation = false;
+        bool forceUserProfileCreation = false, bypassUac = false, remoteImpersonation = false;
         
         try {
             for(int ctr = 0; ctr < args.Length; ctr++) {
@@ -1848,8 +1834,8 @@ Examples:
                         break;
                     
                     case "-p":
-                    case "--create-profile":
-                        createUserProfile = true;
+                    case "--force-profile":
+                        forceUserProfileCreation = true;
                         break;
 
                     case "-b":
@@ -1887,7 +1873,7 @@ Examples:
 
         RunasCs invoker = new RunasCs();
         try {
-            output = invoker.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction, remote, createUserProfile, bypassUac, remoteImpersonation);
+            output = invoker.RunAs(username, password, cmd, domain, processTimeout, logonType, createProcessFunction, remote, forceUserProfileCreation, bypassUac, remoteImpersonation);
         } catch(RunasCsException e) {
             invoker.CleanupHandles();
             output = String.Format("{0}", e.Message);
@@ -1897,6 +1883,7 @@ Examples:
     }
 }
 
+/*
 class MainClass
 {
 
@@ -1905,15 +1892,15 @@ class MainClass
         string[] argsTest = new string[10];
         argsTest[0] = "temp2";
         argsTest[1] = "pwd";
-        argsTest[2] = "C:\\Windows\\system32\\whoami /all";
+        //argsTest[2] = "C:\\Windows\\system32\\whoami /all";
+        //argsTest[2] = "cmd /c set";
         //argsTest[2] = "C:\\Windows\\system32\\ping.exe -n 120 127.0.0.1";
-        //argsTest[2] = "cmd.exe /c echo i was here && ping.exe -n 30 127.0.0.1 > C:\\Windows\\mediumil.txt";
         argsTest[3] = "--function";
         argsTest[4] = "0";
         argsTest[5] = "--logon-type";
-        argsTest[6] = "7";
-        //argsTest[7] = "--remote-impersonation";
-        //argsTest[7] = "--create-profile";
+        argsTest[6] = "8";
+        argsTest[7] = "--remote-impersonation";
+        //argsTest[7] = "--force-profile";
         //argsTest[7] = "--bypass-uac";
         //argsTest[8] = "-t";
         //argsTest[9] = "0";
@@ -1922,12 +1909,12 @@ class MainClass
         Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
     }
 }
+*/
 
-/*
-class MainClass{
+class MainClass
+{
     static void Main(string[] args)
     {
         Console.Out.Write(RunasCsMainClass.RunasCsMain(args));
     }
 }
-*/
