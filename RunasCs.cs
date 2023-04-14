@@ -58,6 +58,7 @@ public class RunasCs
     private IntPtr hOutputWrite;
     private IntPtr hOutputReadTmp;
     private WindowStationDACL stationDaclObj;
+    private IntPtr hTokenPreviousImpersonatingThread;
 
     public RunasCs()
     {
@@ -67,6 +68,7 @@ public class RunasCs
         this.hErrorWrite = new IntPtr(0);
         this.socket = new IntPtr(0);
         this.stationDaclObj = null;
+        this.hTokenPreviousImpersonatingThread = new IntPtr(0);
     }
     
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -329,9 +331,11 @@ public class RunasCs
         return socket;
     }
 
-    private static bool ImpersonateLoggedOnUserWithProperIL(IntPtr hToken, out IntPtr hTokenDuplicate) {
+    private bool ImpersonateLoggedOnUserWithProperIL(IntPtr hToken, out IntPtr hTokenDuplicate) {
         IntPtr hTokenDuplicateLocal = new IntPtr(0);
         bool result = false;
+        if (WindowsIdentity.GetCurrent(true) != null)
+            this.hTokenPreviousImpersonatingThread = WindowsIdentity.GetCurrent(true).Token;
         result = DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenImpersonation, ref hTokenDuplicateLocal);
         if (result == false)
             throw new RunasCsException("DuplicateTokenEx", true);
@@ -342,7 +346,13 @@ public class RunasCs
         return result;
     }
 
-    private static void GetUserEnvironmentBlock(IntPtr hToken, string username, bool forceProfileCreation, bool userProfileExists, out IntPtr lpEnvironment)
+    private void RevertToSelfCustom() {
+        RevertToSelf();
+        if (this.hTokenPreviousImpersonatingThread != IntPtr.Zero) 
+            ImpersonateLoggedOnUser(this.hTokenPreviousImpersonatingThread);
+    }
+
+    private void GetUserEnvironmentBlock(IntPtr hToken, string username, bool forceProfileCreation, bool userProfileExists, out IntPtr lpEnvironment)
     {
         bool result = false;
         lpEnvironment = new IntPtr(0);
@@ -362,12 +372,12 @@ public class RunasCs
         catch {
             result = false;
         }
-        RevertToSelf();
+        RevertToSelfCustom();
         CloseHandle(hTokenDuplicate);
         if (forceProfileCreation && result) UnloadUserProfile(hToken, profileInfo.hProfile);
     }
 
-    private static bool IsUserProfileCreated(string username, string password, string domainName, int logonType) {
+    private bool IsUserProfileCreated(string username, string password, string domainName, int logonType) {
         bool result = false;
         IntPtr hToken = IntPtr.Zero, hTokenDuplicate = IntPtr.Zero;
         int logonProvider = LOGON32_PROVIDER_DEFAULT;
@@ -387,7 +397,7 @@ public class RunasCs
         catch {
             result = false;
         }
-        RevertToSelf();
+        RevertToSelfCustom();
         CloseHandle(hToken);
         CloseHandle(hTokenDuplicate);
         return result;
@@ -448,6 +458,7 @@ public class RunasCs
         this.hOutputWrite = IntPtr.Zero;
         this.hErrorWrite = IntPtr.Zero;
         this.socket = IntPtr.Zero;
+        this.hTokenPreviousImpersonatingThread = IntPtr.Zero;
         this.stationDaclObj = null;
     }
 
@@ -462,7 +473,6 @@ public class RunasCs
         string output = "";
         string desktopName;
         uint logonFlags = 0;
-        bool userProfileExists;
         IntPtr hCurrentProcess = Process.GetCurrentProcess().Handle;
         string commandLine = cmd;
         int sessionId = System.Diagnostics.Process.GetCurrentProcess().SessionId;
@@ -504,18 +514,12 @@ public class RunasCs
         this.stationDaclObj = new WindowStationDACL();
         desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username, logonType);
         startupInfo.lpDesktop = desktopName;
-        // we load the user profile only if it has been already created
-        userProfileExists= IsUserProfileCreated(username, password, domainName, logonType);
-        if (userProfileExists)
-            logonFlags = LOGON_WITH_PROFILE;
-        if (logonType != LOGON32_LOGON_NEW_CREDENTIALS && !forceUserProfileCreation && !userProfileExists)
-            Console.Out.WriteLine("[*] Warning: User profile directory for user " + username + " does not exists. Probably this user never logged on on this machine.");
         if (logonType == LOGON32_LOGON_NEW_CREDENTIALS) logonProvider = LOGON32_PROVIDER_WINNT50;
 
         if (remoteImpersonation)
         {
-            IntPtr hToken = new IntPtr(0);
-            IntPtr hTokenDuplicate = new IntPtr(0);
+            IntPtr hToken = IntPtr.Zero;
+            IntPtr hTokenDuplicate = IntPtr.Zero;
             IntPtr lpEnvironment = IntPtr.Zero;
             if (!LogonUser(username, domainName, password, logonType, logonProvider, ref hToken))
                 throw new RunasCsException("LogonUser", true);
@@ -525,7 +529,7 @@ public class RunasCs
                 AccessToken.SetTokenIntegrityLevel(hTokenDuplicate, AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token));
             // enable all privileges assigned to the token
             AccessToken.EnableAllPrivileges(hTokenDuplicate, logonType);
-            GetUserEnvironmentBlock(hTokenDuplicate, username, false, false, out lpEnvironment);
+            CreateEnvironmentBlock(out lpEnvironment, hToken, false);
             if (!CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo))
                 throw new RunasCsException("CreateProcess", true);
             IntPtr hTokenProcess = IntPtr.Zero;
@@ -542,8 +546,17 @@ public class RunasCs
             CloseHandle(hToken);
             CloseHandle(hTokenDuplicate);
             CloseHandle(hTokenProcess);
+            if (lpEnvironment != IntPtr.Zero) DestroyEnvironmentBlock(lpEnvironment);
         }
         else {
+            bool userProfileExists;
+            // we load the user profile only if it has been already created
+            userProfileExists = IsUserProfileCreated(username, password, domainName, logonType);
+            if (userProfileExists)
+                logonFlags = LOGON_WITH_PROFILE;
+            if (logonType != LOGON32_LOGON_NEW_CREDENTIALS && !forceUserProfileCreation && !userProfileExists)
+                Console.Out.WriteLine("[*] Warning: User profile directory for user " + username + " does not exists. Probably this user never logged on on this machine.");
+
             if (createProcessFunction == 2)
             {
                 if (logonType != LOGON32_LOGON_INTERACTIVE && logonType != LOGON32_LOGON_NEW_CREDENTIALS && !bypassUac)
