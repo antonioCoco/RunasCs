@@ -415,12 +415,10 @@ public class RunasCs
             result = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_PROVIDER_DEFAULT, ref hToken);
         if (result == false)
             throw new RunasCsException("CreateProcessWithLogonWUacBypass: LogonUser", true);
-
         // here we set the IL of the new token equal to our current process IL. Needed or seclogon will fail.
         AccessToken.SetTokenIntegrityLevel(hToken, AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token));
         // remove acl to our current process. Needed for seclogon
         SetSecurityInfo((IntPtr)GetCurrentProcess, SE_OBJECT_TYPE.SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
-
         using (WindowsImpersonationContext impersonatedUser = WindowsIdentity.Impersonate(hToken))
         {
             if (domainName == "") // fixing bugs in seclogon ...
@@ -615,7 +613,7 @@ public class RunasCs
                     {
                         if (logonType == LOGON32_LOGON_INTERACTIVE || logonType == 7 /*Unlock*/ || logonType == 11 /*CachedInteractive*/)
                         { // only these logon types are filtered by UAC
-                            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
+                            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag --bypass-uac to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
                         }
                     }
                 }
