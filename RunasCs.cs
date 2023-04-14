@@ -605,7 +605,7 @@ public class RunasCs
                     }
                     else
                     {
-                        if (logonType == LOGON32_LOGON_INTERACTIVE || logonType == 11 /*CachedInteractive*/)
+                        if (logonType == LOGON32_LOGON_INTERACTIVE || logonType == 7 /*Unlock*/ || logonType == 11 /*CachedInteractive*/)
                         { // only these logon types are filtered by UAC
                             Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
                         }
@@ -1906,12 +1906,12 @@ class MainClass
         argsTest[0] = "temp2";
         argsTest[1] = "pwd";
         argsTest[2] = "C:\\Windows\\system32\\whoami /all";
-        //argsTest[2] = "cmd /c C:\\Windows\\system32\\ping.exe -n 120 127.0.0.1";
+        //argsTest[2] = "C:\\Windows\\system32\\ping.exe -n 120 127.0.0.1";
         //argsTest[2] = "cmd.exe /c echo i was here && ping.exe -n 30 127.0.0.1 > C:\\Windows\\mediumil.txt";
         argsTest[3] = "--function";
         argsTest[4] = "0";
         argsTest[5] = "--logon-type";
-        argsTest[6] = "4";
+        argsTest[6] = "7";
         //argsTest[7] = "--remote-impersonation";
         //argsTest[7] = "--create-profile";
         //argsTest[7] = "--bypass-uac";
