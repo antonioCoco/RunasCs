@@ -1894,34 +1894,6 @@ Examples:
     }
 }
 
-/*
-class MainClass
-{
-
-    static void Main(string[] args)
-    {
-        string[] argsTest = new string[10];
-        argsTest[0] = "temp2";
-        argsTest[1] = "pwd";
-        //argsTest[2] = "C:\\Windows\\system32\\whoami /all";
-        //argsTest[2] = "cmd /c set";
-        //argsTest[2] = "C:\\Windows\\system32\\ping.exe -n 120 127.0.0.1";
-        argsTest[3] = "--function";
-        argsTest[4] = "0";
-        argsTest[5] = "--logon-type";
-        argsTest[6] = "8";
-        argsTest[7] = "--remote-impersonation";
-        //argsTest[7] = "--force-profile";
-        //argsTest[7] = "--bypass-uac";
-        //argsTest[8] = "-t";
-        //argsTest[9] = "0";
-        //argsTest[8] = "--remote";
-        //argsTest[9] = "127.0.0.1:3001";
-        Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
-    }
-}
-*/
-
 class MainClass
 {
     static void Main(string[] args)
