@@ -527,8 +527,7 @@ public class RunasCs
             if (AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token) < AccessToken.GetTokenIntegrityLevel(hTokenDuplicate))
                 AccessToken.SetTokenIntegrityLevel(hTokenDuplicate, AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token));
             // enable all privileges assigned to the token
-            if (logonType != LOGON32_LOGON_NETWORK && logonType != LOGON32_LOGON_NETWORK_CLEARTEXT)
-                AccessToken.EnableAllPrivileges(hTokenDuplicate);
+            AccessToken.EnableAllPrivileges(hTokenDuplicate, logonType);
             GetUserEnvironmentBlock(hTokenDuplicate, username, createUserProfile, out lpEnvironment);
             success = CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo);
             if (success == false)
@@ -631,9 +630,7 @@ public class RunasCs
                 if (!bypassUac)
                 {
                     // enable all privileges assigned to the token
-                    if (logonType != LOGON32_LOGON_NETWORK && logonType != LOGON32_LOGON_NETWORK_CLEARTEXT)
-                        AccessToken.EnableAllPrivileges(hTokenDuplicate);
-
+                    AccessToken.EnableAllPrivileges(hTokenDuplicate, logonType);
                     if (createProcessFunction == 0)
                     {
                         // obtain environmentBlock for desired user
@@ -1258,6 +1255,7 @@ public static class AccessToken{
     private const int LOGON32_PROVIDER_DEFAULT = 0;
     private const int LOGON32_LOGON_INTERACTIVE = 2;
     private const int LOGON32_LOGON_NETWORK = 3;
+    private const int LOGON32_LOGON_NETWORK_CLEARTEXT = 8;
 
     public const UInt32 STANDARD_RIGHTS_REQUIRED = 0x000F0000;
     public const UInt32 STANDARD_RIGHTS_READ = 0x00020000;
@@ -1607,10 +1605,12 @@ public static class AccessToken{
         return illevel;
     }
 
-    public static string EnableAllPrivileges(IntPtr token)
+    public static string EnableAllPrivileges(IntPtr token, int logonType)
     {
         string output = "";
         string[] privileges = { "SeAssignPrimaryTokenPrivilege", "SeAuditPrivilege", "SeBackupPrivilege", "SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege", "SeCreatePagefilePrivilege", "SeCreatePermanentPrivilege", "SeCreateSymbolicLinkPrivilege", "SeCreateTokenPrivilege", "SeDebugPrivilege", "SeDelegateSessionUserImpersonatePrivilege", "SeEnableDelegationPrivilege", "SeImpersonatePrivilege", "SeIncreaseBasePriorityPrivilege", "SeIncreaseQuotaPrivilege", "SeIncreaseWorkingSetPrivilege", "SeLoadDriverPrivilege", "SeLockMemoryPrivilege", "SeMachineAccountPrivilege", "SeManageVolumePrivilege", "SeProfileSingleProcessPrivilege", "SeRelabelPrivilege", "SeRemoteShutdownPrivilege", "SeRestorePrivilege", "SeSecurityPrivilege", "SeShutdownPrivilege", "SeSyncAgentPrivilege", "SeSystemEnvironmentPrivilege", "SeSystemProfilePrivilege", "SeSystemtimePrivilege", "SeTakeOwnershipPrivilege", "SeTcbPrivilege", "SeTimeZonePrivilege", "SeTrustedCredManAccessPrivilege", "SeUndockPrivilege", "SeUnsolicitedInputPrivilege" };
+        if (logonType != LOGON32_LOGON_NETWORK && logonType != LOGON32_LOGON_NETWORK_CLEARTEXT)
+            return output;
         foreach (string privilege in privileges)
         {
             output += EnablePrivilege(privilege, token);
@@ -1931,7 +1931,7 @@ class MainClass
         argsTest[6] = "8";
         //argsTest[7] = "--remote-impersonation";
         //argsTest[7] = "--create-profile";
-        argsTest[7] = "--bypass-uac";
+        //argsTest[7] = "--bypass-uac";
         //argsTest[8] = "-t";
         //argsTest[9] = "0";
         argsTest[8] = "--remote";
