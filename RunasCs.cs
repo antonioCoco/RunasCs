@@ -577,7 +577,7 @@ public class RunasCs
                         }
                         else
                         {
-                            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the --logon-type value '{1}' to have a non filtered token", username, logonTypeNotFiltered));
+                            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flags --bypass-uac and --logon-type '{1}' to have a non filtered token", username, logonTypeNotFiltered));
                             if (!CreateProcessWithLogonW(username, domainName, password, logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo))
                                 throw new RunasCsException("CreateProcessWithLogonW logon type 2", true);
                         }
@@ -592,6 +592,8 @@ public class RunasCs
             }
             else
             {
+                if (bypassUac)
+                    throw new RunasCsException(String.Format("The flag --bypass-uac is not compatible with {0} but only with --function '2' (CreateProcessWithLogonW)", GetProcessFunction(createProcessFunction)));
                 IntPtr hToken = new IntPtr(0);
                 IntPtr hTokenDuplicate = new IntPtr(0);
                 if (!LogonUser(username, domainName, password, logonType, logonProvider, ref hToken))
@@ -599,36 +601,25 @@ public class RunasCs
                 if (!DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenPrimary, ref hTokenDuplicate))
                     throw new RunasCsException("DuplicateTokenEx", true);
                 if (AccessToken.IsLimitedUACToken(hTokenDuplicate, username, domainName, password, out logonTypeNotFiltered))
+                    Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the --logon-type value '{1}' to have a non filtered token", username, logonTypeNotFiltered));
+                // enable all privileges assigned to the token
+                AccessToken.EnableAllPrivileges(hTokenDuplicate, logonType);
+                if (createProcessFunction == 0)
                 {
-                    if (bypassUac)
-                    {
-                        if (!CreateProcessWithLogonWUacBypass(logonType, logonFlags, username, domainName, password, null, commandLine, ref startupInfo, out processInfo))
-                            throw new RunasCsException("CreateProcessWithLogonWUacBypass", true);
-                    }
-                    else
-                        Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the --logon-type value '{1}' to have a non filtered token", username, logonTypeNotFiltered));
+                    // obtain environmentBlock for desired user
+                    IntPtr lpEnvironment = IntPtr.Zero;
+                    GetUserEnvironmentBlock(hTokenDuplicate, username, forceUserProfileCreation, userProfileExists, out lpEnvironment);
+                    AccessToken.EnablePrivilege("SeAssignPrimaryTokenPrivilege", WindowsIdentity.GetCurrent().Token);
+                    //the inherit handle flag must be true otherwise the pipe handles won't be inherited and the output won't be retrieved
+                    if (!CreateProcessAsUser(hTokenDuplicate, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo))
+                        throw new RunasCsException("CreateProcessAsUser", true);
+                    if (lpEnvironment != IntPtr.Zero) DestroyEnvironmentBlock(lpEnvironment);
                 }
-                else
-                    bypassUac = false; // we reset this flag as it's not considered when token is not limited
-                if (!bypassUac)
+                else if (createProcessFunction == 1)
                 {
-                    // enable all privileges assigned to the token
-                    AccessToken.EnableAllPrivileges(hTokenDuplicate, logonType);
-                    if (createProcessFunction == 0)
-                    {
-                        // obtain environmentBlock for desired user
-                        IntPtr lpEnvironment = IntPtr.Zero;
-                        GetUserEnvironmentBlock(hTokenDuplicate, username, forceUserProfileCreation, userProfileExists, out lpEnvironment);
-                        //the inherit handle flag must be true otherwise the pipe handles won't be inherited and the output won't be retrieved
-                        if (!CreateProcessAsUser(hTokenDuplicate, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo))
-                            throw new RunasCsException("CreateProcessAsUser", true);
-                        if (lpEnvironment != IntPtr.Zero) DestroyEnvironmentBlock(lpEnvironment);
-                    }
-                    else if (createProcessFunction == 1)
-                    {
-                        if (!CreateProcessWithTokenW(hTokenDuplicate, logonFlags, null, commandLine, CREATE_NO_WINDOW, IntPtr.Zero, null, ref startupInfo, out processInfo))
-                            throw new RunasCsException("CreateProcessWithTokenW", true);
-                    }
+                    AccessToken.EnablePrivilege("SeImpersonatePrivilege", WindowsIdentity.GetCurrent().Token);
+                    if (!CreateProcessWithTokenW(hTokenDuplicate, logonFlags, null, commandLine, CREATE_NO_WINDOW, IntPtr.Zero, null, ref startupInfo, out processInfo))
+                        throw new RunasCsException("CreateProcessWithTokenW", true);
                 }
                 CloseHandle(hToken);
                 CloseHandle(hTokenDuplicate);
@@ -1432,23 +1423,6 @@ public static class AccessToken{
         return "Error";
     }
 
-    private static string EnablePrivilege(string privilege, IntPtr token)
-    {
-        string output = "";
-        LUID sebLuid = new LUID();
-        TOKEN_PRIVILEGES_2 tokenp = new TOKEN_PRIVILEGES_2();
-        tokenp.PrivilegeCount = 1;
-        LookupPrivilegeValue(null, privilege, ref sebLuid);
-        tokenp.Luid = sebLuid;
-        tokenp.Attributes = SE_PRIVILEGE_ENABLED;
-        if (!AdjustTokenPrivileges(token, false, ref tokenp, 0, 0, 0))
-        {
-            throw new RunasCsException("AdjustTokenPrivileges on privilege " + privilege, true);
-        }
-        output += "\r\nAdjustTokenPrivileges on privilege " + privilege + " succeeded";
-        return output;
-    }
-
     public static List<string[]> GetTokenPrivileges(IntPtr tHandle){
         List<string[]> privileges = new List<string[]>();
         uint TokenInfLength=0;
@@ -1612,6 +1586,23 @@ public static class AccessToken{
         }
         Marshal.FreeHGlobal(pb);
         return illevel;
+    }
+
+    public static string EnablePrivilege(string privilege, IntPtr token)
+    {
+        string output = "";
+        LUID sebLuid = new LUID();
+        TOKEN_PRIVILEGES_2 tokenp = new TOKEN_PRIVILEGES_2();
+        tokenp.PrivilegeCount = 1;
+        LookupPrivilegeValue(null, privilege, ref sebLuid);
+        tokenp.Luid = sebLuid;
+        tokenp.Attributes = SE_PRIVILEGE_ENABLED;
+        if (!AdjustTokenPrivileges(token, false, ref tokenp, 0, 0, 0))
+        {
+            throw new RunasCsException("AdjustTokenPrivileges on privilege " + privilege, true);
+        }
+        output += "\r\nAdjustTokenPrivileges on privilege " + privilege + " succeeded";
+        return output;
     }
 
     public static string EnableAllPrivileges(IntPtr token, int logonType)
