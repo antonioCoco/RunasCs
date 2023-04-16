@@ -549,7 +549,7 @@ public class RunasCs
             if (userProfileExists || forceUserProfileCreation)
                 logonFlags = LOGON_WITH_PROFILE;
             if (logonType != LOGON32_LOGON_NEW_CREDENTIALS && !forceUserProfileCreation && !userProfileExists)
-                Console.Out.WriteLine("[*] Warning: User profile directory for user " + username + " does not exists. Probably this user never logged on on this machine.");
+                Console.Out.WriteLine("[*] Warning: User profile directory for user " + username + " does not exists. Use --force-profile if you want to force the creation.");
 
             if (createProcessFunction == 2)
             {
