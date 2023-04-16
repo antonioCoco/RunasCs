@@ -599,7 +599,7 @@ public class RunasCs
                 IntPtr hTokenDuplicate = new IntPtr(0);
                 if (!LogonUser(username, domainName, password, logonType, logonProvider, ref hToken))
                     throw new RunasCsException("LogonUser", true);
-                if (!DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityDelegation, TokenPrimary, ref hTokenDuplicate))
+                if (!DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenPrimary, ref hTokenDuplicate))
                     throw new RunasCsException("DuplicateTokenEx", true);
                 if (AccessToken.IsLimitedUACToken(hTokenDuplicate, username, domainName, password, out logonTypeNotFiltered))
                 {
