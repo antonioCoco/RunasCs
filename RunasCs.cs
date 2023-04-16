@@ -468,12 +468,7 @@ public class RunasCs
             2: CreateProcessWithLogonW();
     */
     {
-        string output = "";
-        string desktopName;
-        uint logonFlags = 0;
-        IntPtr hCurrentProcess = Process.GetCurrentProcess().Handle;
-        string commandLine = cmd;
-        int sessionId = System.Diagnostics.Process.GetCurrentProcess().SessionId;
+        string commandLine = ParseCommonProcessesInCommandline(cmd);
         int logonProvider = LOGON32_PROVIDER_DEFAULT;
 
         STARTUPINFO startupInfo = new STARTUPINFO();
@@ -481,6 +476,7 @@ public class RunasCs
         startupInfo.lpReserved = null;
         ProcessInformation processInfo = new ProcessInformation();
         if (processTimeout > 0) {
+            IntPtr hCurrentProcess = Process.GetCurrentProcess().Handle;
             if (!CreateAnonymousPipeEveryoneAccess(ref this.hOutputReadTmp, ref this.hOutputWrite)) {
                 throw new RunasCsException("CreatePipe", true);
             }
@@ -500,7 +496,6 @@ public class RunasCs
             startupInfo.dwFlags = Startf_UseStdHandles;
             startupInfo.hStdOutput = this.hOutputWrite;
             startupInfo.hStdError = this.hErrorWrite;
-            commandLine = ParseCommonProcessesInCommandline(commandLine);
         } else if (remote != null) {
             this.socket = ConnectRemote(remote);
             startupInfo.dwFlags = Startf_UseStdHandles;
@@ -510,44 +505,48 @@ public class RunasCs
         }
 
         this.stationDaclObj = new WindowStationDACL();
-        desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username, logonType);
+        string desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username, logonType);
         startupInfo.lpDesktop = desktopName;
         if (logonType == LOGON32_LOGON_NEW_CREDENTIALS) logonProvider = LOGON32_PROVIDER_WINNT50;
+        int logonTypeNotFiltered = 0;
 
         if (remoteImpersonation)
         {
             IntPtr hToken = IntPtr.Zero;
-            IntPtr hTokenDuplicate = IntPtr.Zero;
+            IntPtr hTokenDupImpersonation = IntPtr.Zero;
             IntPtr lpEnvironment = IntPtr.Zero;
             if (!LogonUser(username, domainName, password, logonType, logonProvider, ref hToken))
                 throw new RunasCsException("LogonUser", true);
-            if (!DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenImpersonation, ref hTokenDuplicate))
+            if (AccessToken.IsLimitedUACToken(hToken, username, domainName, password, out logonTypeNotFiltered))
+                Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the --logon-type value '{1}' to have a non filtered token", username, logonTypeNotFiltered));
+            if (!DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenImpersonation, ref hTokenDupImpersonation))
                 throw new RunasCsException("DuplicateTokenEx", true);
-            if (AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token) < AccessToken.GetTokenIntegrityLevel(hTokenDuplicate))
-                AccessToken.SetTokenIntegrityLevel(hTokenDuplicate, AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token));
+            if (AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token) < AccessToken.GetTokenIntegrityLevel(hTokenDupImpersonation))
+                AccessToken.SetTokenIntegrityLevel(hTokenDupImpersonation, AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token));
             // enable all privileges assigned to the token
-            AccessToken.EnableAllPrivileges(hTokenDuplicate, logonType);
+            AccessToken.EnableAllPrivileges(hTokenDupImpersonation, logonType);
             CreateEnvironmentBlock(out lpEnvironment, hToken, false);
             if (!CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo))
                 throw new RunasCsException("CreateProcess", true);
             IntPtr hTokenProcess = IntPtr.Zero;
             if (!OpenProcessToken(processInfo.process, AccessToken.TOKEN_ALL_ACCESS, out hTokenProcess))
                 throw new RunasCsException("OpenProcessToken", true);
-            AccessToken.SetTokenIntegrityLevel(hTokenProcess, AccessToken.GetTokenIntegrityLevel(hTokenDuplicate));
+            AccessToken.SetTokenIntegrityLevel(hTokenProcess, AccessToken.GetTokenIntegrityLevel(hTokenDupImpersonation));
             // this will solve some permissions errors when attempting to get the current process handle while impersonating
             SetSecurityInfo(processInfo.process, SE_OBJECT_TYPE.SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
             // this will solve some issues, e.g. Access Denied errors when running whoami.exe
             SetSecurityInfo(hTokenProcess, SE_OBJECT_TYPE.SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
-            if (!SetThreadToken(ref processInfo.thread, hTokenDuplicate))
+            if (!SetThreadToken(ref processInfo.thread, hTokenDupImpersonation))
                 throw new RunasCsException("SetThreadToken", true);
             ResumeThread(processInfo.thread);
             CloseHandle(hToken);
-            CloseHandle(hTokenDuplicate);
+            CloseHandle(hTokenDupImpersonation);
             CloseHandle(hTokenProcess);
             if (lpEnvironment != IntPtr.Zero) DestroyEnvironmentBlock(lpEnvironment);
         }
         else {
             bool userProfileExists;
+            uint logonFlags = 0;
             userProfileExists = IsUserProfileCreated(username, password, domainName, logonType);
             // we load the user profile only if it has been already created or the creation is forced from the flag --force-profile
             if (userProfileExists || forceUserProfileCreation)
@@ -557,8 +556,6 @@ public class RunasCs
 
             if (createProcessFunction == 2)
             {
-                if (logonType != LOGON32_LOGON_INTERACTIVE && logonType != LOGON32_LOGON_NEW_CREDENTIALS && !bypassUac)
-                    Console.Out.WriteLine("[*] Warning: Using function CreateProcessWithLogonW is not compatible with logon type " + logonType.ToString() + ". Reverting to logon type Interactive (2)...");
                 if (logonType == LOGON32_LOGON_NEW_CREDENTIALS)
                 {
                     if (domainName == "")
@@ -569,10 +566,12 @@ public class RunasCs
                 else
                 {
                     IntPtr hTokenUacCheck = new IntPtr(0);
+                    if (logonType != LOGON32_LOGON_INTERACTIVE && !bypassUac)
+                        Console.Out.WriteLine("[*] Warning: Using function CreateProcessWithLogonW is not compatible with the requested logon type " + logonType.ToString() + ". Reverting to logon type Interactive (2). If you want to force a specific logon type use the flag combination of --remote-impersonation and --logon-type.");
                     // we use the logon type 2 - Interactive because CreateProcessWithLogonW internally use this logon type for the logon 
                     if (!LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, ref hTokenUacCheck))
                         throw new RunasCsException("LogonUser", true);
-                    if (AccessToken.IsLimitedUACToken(hTokenUacCheck, username, domainName, password))
+                    if (AccessToken.IsLimitedUACToken(hTokenUacCheck, username, domainName, password, out logonTypeNotFiltered))
                     {
                         if (bypassUac)
                         {
@@ -581,7 +580,7 @@ public class RunasCs
                         }
                         else
                         {
-                            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag -b to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
+                            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the --logon-type value '{1}' to have a non filtered token", username, logonTypeNotFiltered));
                             if (!CreateProcessWithLogonW(username, domainName, password, logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo))
                                 throw new RunasCsException("CreateProcessWithLogonW logon type 2", true);
                         }
@@ -602,7 +601,7 @@ public class RunasCs
                     throw new RunasCsException("LogonUser", true);
                 if (!DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityDelegation, TokenPrimary, ref hTokenDuplicate))
                     throw new RunasCsException("DuplicateTokenEx", true);
-                if (AccessToken.IsLimitedUACToken(hTokenDuplicate, username, domainName, password))
+                if (AccessToken.IsLimitedUACToken(hTokenDuplicate, username, domainName, password, out logonTypeNotFiltered))
                 {
                     if (bypassUac)
                     {
@@ -610,12 +609,7 @@ public class RunasCs
                             throw new RunasCsException("CreateProcessWithLogonWUacBypass", true);
                     }
                     else
-                    {
-                        if (logonType == LOGON32_LOGON_INTERACTIVE || logonType == 7 /*Unlock*/ || logonType == 11 /*CachedInteractive*/)
-                        { // only these logon types are filtered by UAC
-                            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flag --bypass-uac to try a UAC bypass or use the NetworkCleartext (8) in --logon-type.", username));
-                        }
-                    }
+                        Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the --logon-type value '{1}' to have a non filtered token", username, logonTypeNotFiltered));
                 }
                 else
                     bypassUac = false; // we reset this flag as it's not considered when token is not limited
@@ -644,20 +638,22 @@ public class RunasCs
             }
         }
         Console.Out.Flush();  // flushing console before waiting for child process execution
+        string output = "";
         if (processTimeout > 0) {
             CloseHandle(this.hOutputWrite);
             CloseHandle(this.hErrorWrite);
             this.hOutputWrite = IntPtr.Zero;
             this.hErrorWrite = IntPtr.Zero;
             WaitForSingleObject(processInfo.process, processTimeout);
-            output += ReadOutputFromPipe(this.hOutputRead);
+            output += "\r\n" + ReadOutputFromPipe(this.hOutputRead);
         } else {
-            if(remoteImpersonation)
-                output += "[+] Running in session " + sessionId.ToString() + " with process function 'Remote Impersonation' \r\n";
+            int sessionId = System.Diagnostics.Process.GetCurrentProcess().SessionId;
+            if (remoteImpersonation)
+                output += "\r\n[+] Running in session " + sessionId.ToString() + " with process function 'Remote Impersonation' \r\n";
             else
-                output += "[+] Running in session " + sessionId.ToString() + " with process function " + GetProcessFunction(createProcessFunction) + "\r\n";
+                output += "\r\n[+] Running in session " + sessionId.ToString() + " with process function " + GetProcessFunction(createProcessFunction) + "\r\n";
             output += "[+] Using Station\\Desktop: " + desktopName + "\r\n";
-            output += "[+] Async process '" + commandLine + "' with pid " + processInfo.processId + " created and left in background.\r\n";
+            output += "[+] Async process '" + commandLine + "' with pid " + processInfo.processId + " created in background.\r\n";
         }
 
         CloseHandle(processInfo.process);
@@ -1241,6 +1237,9 @@ public static class AccessToken{
     private const int LOGON32_PROVIDER_DEFAULT = 0;
     private const int LOGON32_LOGON_INTERACTIVE = 2;
     private const int LOGON32_LOGON_NETWORK = 3;
+    private const int LOGON32_LOGON_BATCH = 4;
+    private const int LOGON32_LOGON_SERVICE = 5;
+    private const int LOGON32_LOGON_UNLOCK = 7;
     private const int LOGON32_LOGON_NETWORK_CLEARTEXT = 8;
 
     public const UInt32 STANDARD_RIGHTS_REQUIRED = 0x000F0000;
@@ -1404,6 +1403,11 @@ public static class AccessToken{
         public UInt32 TokenIsElevated;
     }
 
+    public struct TOKEN_ELEVATION_TYPE
+    {
+        public UInt32 TokenElevationType;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct SID_IDENTIFIER_AUTHORITY
     {
@@ -1461,10 +1465,9 @@ public static class AccessToken{
         Result = GetTokenInformation(tHandle, TOKEN_INFORMATION_CLASS.TokenPrivileges, IntPtr.Zero, TokenInfLength, out TokenInfLength);
         IntPtr TokenInformation = Marshal.AllocHGlobal((int)TokenInfLength) ;
         Result = GetTokenInformation(tHandle, TOKEN_INFORMATION_CLASS.TokenPrivileges, TokenInformation, TokenInfLength, out TokenInfLength) ; 
-        if (Result == false){
+        if (Result == false)
             throw new RunasCsException("GetTokenInformation", true);
-        }
-        TOKEN_PRIVILEGES TokenPrivileges = ( TOKEN_PRIVILEGES )Marshal.PtrToStructure( TokenInformation , typeof( TOKEN_PRIVILEGES ) ) ;
+        TOKEN_PRIVILEGES TokenPrivileges = (TOKEN_PRIVILEGES)Marshal.PtrToStructure( TokenInformation , typeof( TOKEN_PRIVILEGES ) ) ;
         for(int i=0;i<TokenPrivileges.PrivilegeCount;i++){
             StringBuilder sb = new StringBuilder();
             int luidNameLen = 0;
@@ -1476,9 +1479,8 @@ public static class AccessToken{
             LookupPrivilegeName(null, ptrLuid, null, ref luidNameLen); // call once to get the name len
             sb.EnsureCapacity(luidNameLen + 1);
             Result = LookupPrivilegeName(null, ptrLuid, sb, ref luidNameLen);// call again to get the name
-            if (Result == false){
+            if (Result == false)
                 throw new RunasCsException("LookupPrivilegeName", true);
-            }
             privilegeStatus[0]=sb.ToString();
             privilegeStatus[1]=convertAttributeToString(TokenPrivileges.Privileges[i].Attributes);
             privileges.Add(privilegeStatus);
@@ -1486,45 +1488,74 @@ public static class AccessToken{
         return privileges;
     }
 
-    public static bool IsLimitedUACToken(IntPtr hToken, string username, string domainName, string password) {
-        bool filtered = false, Result = false, Result2 = false;
-        int TokenInfLength = 0;
-        IntPtr hTokenInteractive = IntPtr.Zero;
+    public static bool IsLimitedUACToken(IntPtr hToken, string username, string domainName, string password, out int logonTypeNotFiltered) {
+        bool tokenIsElevated = false;
+        bool tokenIsLimited = false;
+        bool tokenIsFiltered = false;
+        int tokenInfLength = 0;
         IntPtr hTokenNetwork = IntPtr.Zero;
-        // first call gets lenght of TokenInformation
-        Result = GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenElevation, IntPtr.Zero, TokenInfLength, out TokenInfLength);
-        IntPtr tokenElevationPtr = Marshal.AllocHGlobal(TokenInfLength);
-        // then calls retrieving the required value
-        Result = GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenElevation, tokenElevationPtr, TokenInfLength, out TokenInfLength);
-        if (Result)
+        IntPtr hTokenBatch = IntPtr.Zero;
+        IntPtr hTokenService = IntPtr.Zero;
+        bool resultNetworkLogon = false;
+        bool resultBatchLogon = false;
+        bool resultServiceLogon = false;
+        logonTypeNotFiltered = 0;
+        // GetTokenInformation(TokenElevation) does not return true in all cases, e.g. when having an High IL token with SeImpersonate privilege
+        if (GetTokenIntegrityLevel(hToken) >= IntegrityLevel.High)
+            return false;
+        GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenElevation, IntPtr.Zero, tokenInfLength, out tokenInfLength);
+        IntPtr tokenElevationPtr = Marshal.AllocHGlobal(tokenInfLength);
+        if (!GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenElevation, tokenElevationPtr, tokenInfLength, out tokenInfLength))
+            throw new RunasCsException("GetTokenInformation TokenElevation", true);
+        TOKEN_ELEVATION tokenElevation = (TOKEN_ELEVATION)Marshal.PtrToStructure(tokenElevationPtr, typeof(TOKEN_ELEVATION));
+        if (tokenElevation.TokenIsElevated > 0) {
+            tokenIsElevated = true;
+            Marshal.FreeHGlobal(tokenElevationPtr);
+        }
+        else {
+            tokenInfLength = 0;
+            GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenElevationType, IntPtr.Zero, tokenInfLength, out tokenInfLength);
+            IntPtr tokenElevationTypePtr = Marshal.AllocHGlobal(tokenInfLength);
+            if (!GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenElevationType, tokenElevationTypePtr, tokenInfLength, out tokenInfLength))
+                throw new RunasCsException("GetTokenInformation TokenElevationType", true);
+            TOKEN_ELEVATION_TYPE tokenElevationType = (TOKEN_ELEVATION_TYPE)Marshal.PtrToStructure(tokenElevationTypePtr, typeof(TOKEN_ELEVATION_TYPE));
+            if (tokenElevationType.TokenElevationType == 3) { // 3 = TokenElevationTypeLimited
+                logonTypeNotFiltered = LOGON32_LOGON_NETWORK_CLEARTEXT;
+                tokenIsLimited = true;
+            }
+            Marshal.FreeHGlobal(tokenElevationTypePtr);
+        }
+        // Check differences between the requesteed logon type and non-filtered logon types (Network, Batch, Service)
+        // If IL mismatch, UAC applied some restrictions
+        if (!tokenIsElevated && !tokenIsLimited)
         {
-            TOKEN_ELEVATION tokenElevation = (TOKEN_ELEVATION)Marshal.PtrToStructure(tokenElevationPtr, typeof(TOKEN_ELEVATION));
-            if (tokenElevation.TokenIsElevated == 0)
-                filtered = true;
-        }
-        Marshal.FreeHGlobal(tokenElevationPtr);
-        // second iteration of token checks. Check differences between Interactive and Network logon types. If IL mismatch, UAC applied some restrictions
-        if (filtered) {
-            Result = LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, ref hTokenInteractive);
-            Result2 = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, ref hTokenNetwork);
-            if (Result && Result2) {
-                if (AccessToken.GetTokenIntegrityLevel(hTokenInteractive) < AccessToken.GetTokenIntegrityLevel(hTokenNetwork))
-                    filtered = true;
-                else
-                    filtered = false;
-                CloseHandle(hTokenInteractive);
-                CloseHandle(hTokenNetwork);
+            IntegrityLevel userTokenIL = AccessToken.GetTokenIntegrityLevel(hToken);
+            resultNetworkLogon = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_PROVIDER_DEFAULT, ref hTokenNetwork);
+            resultBatchLogon = LogonUser(username, domainName, password, LOGON32_LOGON_BATCH, LOGON32_PROVIDER_DEFAULT, ref hTokenBatch);
+            resultServiceLogon = LogonUser(username, domainName, password, LOGON32_LOGON_SERVICE, LOGON32_PROVIDER_DEFAULT, ref hTokenService);
+            if (resultNetworkLogon && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenNetwork))
+            {
+                tokenIsFiltered = true;
+                logonTypeNotFiltered = LOGON32_LOGON_NETWORK_CLEARTEXT;
             }
-            else {
-                // in some edge cases we can land here, check the UAC registry key as a last desperate attempt
-                Int32 uacEnabled = (Int32)Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "EnableLUA", null);
-                if (uacEnabled == 1)
-                    filtered = true;
-                else
-                    filtered = false;
+            else if (resultServiceLogon && !tokenIsFiltered && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenService))
+            {
+                // we check Service logon because by default it has the SeImpersonate privilege, available only in High IL
+                tokenIsFiltered = true;
+                logonTypeNotFiltered = LOGON32_LOGON_SERVICE;
             }
+            else if (resultBatchLogon && !tokenIsFiltered && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenBatch))
+            {
+                tokenIsFiltered = true;
+                logonTypeNotFiltered = LOGON32_LOGON_BATCH;
+            }
+            if (resultNetworkLogon) CloseHandle(hTokenNetwork);
+            if (resultBatchLogon) CloseHandle(hTokenBatch);
+            if (resultServiceLogon) CloseHandle(hTokenService);
         }
-        return filtered;
+        else
+            tokenIsFiltered = true;
+        return tokenIsFiltered;
     }
 
     // thanks @winlogon0 --> https://github.com/AltF5/MediumToHighIL_Test/blob/main/TestCode2.cs
@@ -1893,6 +1924,34 @@ Examples:
         return output;
     }
 }
+
+/*
+class MainClass
+{
+    static void Main(string[] args)
+    {
+        string[] argsTest = new string[10];
+        argsTest[0] = "temp3";
+        argsTest[1] = "pwd";
+        //argsTest[2] = "C:\\Windows\\system32\\whoami /all";
+        argsTest[2] = "cmd /c whoami /all";
+        //argsTest[2] = "C:\\Windows\\system32\\ping.exe -n 120 127.0.0.1";
+        argsTest[3] = "--function";
+        argsTest[4] = "1";
+        argsTest[5] = "--logon-type";
+        argsTest[6] = "2";
+        //argsTest[7] = "--remote-impersonation";
+        //argsTest[7] = "--force-profile";
+        //argsTest[7] = "--bypass-uac";
+        //argsTest[8] = "-t";
+        //argsTest[9] = "0";
+        //argsTest[8] = "--remote";
+        //argsTest[9] = "127.0.0.1:3001";
+        Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
+    }
+}
+*/
+
 
 class MainClass
 {
