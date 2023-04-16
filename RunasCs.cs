@@ -521,7 +521,7 @@ public class RunasCs
             if (AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token) < AccessToken.GetTokenIntegrityLevel(hTokenDupImpersonation))
                 AccessToken.SetTokenIntegrityLevel(hTokenDupImpersonation, AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token));
             // enable all privileges assigned to the token
-            AccessToken.EnableAllPrivileges(hTokenDupImpersonation, logonType);
+            AccessToken.EnableAllPrivileges(hTokenDupImpersonation);
             CreateEnvironmentBlock(out lpEnvironment, hToken, false);
             if (!CreateProcess(null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT, lpEnvironment, Environment.GetEnvironmentVariable("SystemRoot") + "\\System32", ref startupInfo, out processInfo))
                 throw new RunasCsException("CreateProcess", true);
@@ -603,10 +603,9 @@ public class RunasCs
                 if (AccessToken.IsLimitedUACToken(hTokenDuplicate, username, domainName, password, out logonTypeNotFiltered))
                     Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the --logon-type value '{1}' to have a non filtered token", username, logonTypeNotFiltered));
                 // enable all privileges assigned to the token
-                AccessToken.EnableAllPrivileges(hTokenDuplicate, logonType);
+                AccessToken.EnableAllPrivileges(hTokenDuplicate);
                 if (createProcessFunction == 0)
                 {
-                    // obtain environmentBlock for desired user
                     IntPtr lpEnvironment = IntPtr.Zero;
                     GetUserEnvironmentBlock(hTokenDuplicate, username, forceUserProfileCreation, userProfileExists, out lpEnvironment);
                     AccessToken.EnablePrivilege("SeAssignPrimaryTokenPrivilege", WindowsIdentity.GetCurrent().Token);
@@ -1605,13 +1604,10 @@ public static class AccessToken{
         return output;
     }
 
-    public static string EnableAllPrivileges(IntPtr token, int logonType)
+    public static string EnableAllPrivileges(IntPtr token)
     {
         string output = "";
         string[] privileges = { "SeAssignPrimaryTokenPrivilege", "SeAuditPrivilege", "SeBackupPrivilege", "SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege", "SeCreatePagefilePrivilege", "SeCreatePermanentPrivilege", "SeCreateSymbolicLinkPrivilege", "SeCreateTokenPrivilege", "SeDebugPrivilege", "SeDelegateSessionUserImpersonatePrivilege", "SeEnableDelegationPrivilege", "SeImpersonatePrivilege", "SeIncreaseBasePriorityPrivilege", "SeIncreaseQuotaPrivilege", "SeIncreaseWorkingSetPrivilege", "SeLoadDriverPrivilege", "SeLockMemoryPrivilege", "SeMachineAccountPrivilege", "SeManageVolumePrivilege", "SeProfileSingleProcessPrivilege", "SeRelabelPrivilege", "SeRemoteShutdownPrivilege", "SeRestorePrivilege", "SeSecurityPrivilege", "SeShutdownPrivilege", "SeSyncAgentPrivilege", "SeSystemEnvironmentPrivilege", "SeSystemProfilePrivilege", "SeSystemtimePrivilege", "SeTakeOwnershipPrivilege", "SeTcbPrivilege", "SeTimeZonePrivilege", "SeTrustedCredManAccessPrivilege", "SeUndockPrivilege", "SeUnsolicitedInputPrivilege" };
-        // Logon Type 3 (LOGON32_LOGON_NETWORK) and 8 (LOGON32_LOGON_NETWORK_CLEARTEXT) have already all privs enabled
-        if (logonType == LOGON32_LOGON_NETWORK && logonType == LOGON32_LOGON_NETWORK_CLEARTEXT)
-            return output;
         foreach (string privilege in privileges)
         {
             output += EnablePrivilege(privilege, token);
