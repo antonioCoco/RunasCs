@@ -359,7 +359,7 @@ public class RunasCs
         }
         RevertToSelfCustom();
         CloseHandle(hTokenDuplicate);
-        if (forceProfileCreation && result) UnloadUserProfile(hToken, profileInfo.hProfile);
+        if (result && (forceProfileCreation || userProfileExists)) UnloadUserProfile(hToken, profileInfo.hProfile);
     }
 
     private bool IsUserProfileCreated(string username, string password, string domainName, int logonType) {
