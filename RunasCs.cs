@@ -484,7 +484,6 @@ public class RunasCs
             IntPtr hCurrentProcess = Process.GetCurrentProcess().Handle;
             if (!CreateAnonymousPipeEveryoneAccess(ref hOutputReadTmpLocal, ref hOutputWriteLocal))
                 throw new RunasCsException("CreatePipe", true);
-            //1998's code. Old but gold https://support.microsoft.com/en-us/help/190351/how-to-spawn-console-processes-with-redirected-standard-handles
             if (!DuplicateHandle(hCurrentProcess, hOutputWriteLocal, hCurrentProcess, out hErrorWriteLocal, 0, true, DUPLICATE_SAME_ACCESS))
                 throw new RunasCsException("DuplicateHandle stderr write pipe", true);
             if (!DuplicateHandle(hCurrentProcess, hOutputReadTmpLocal, hCurrentProcess, out hOutputReadLocal, 0, false, DUPLICATE_SAME_ACCESS))
