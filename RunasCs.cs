@@ -322,12 +322,11 @@ public class RunasCs
         bool result = false;
         if (WindowsIdentity.GetCurrent(true) != null)
             this.hTokenPreviousImpersonatingThread = WindowsIdentity.GetCurrent(true).Token;
-        result = DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenImpersonation, ref hTokenDuplicateLocal);
-        if (result == false)
+        if (!DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenImpersonation, ref hTokenDuplicateLocal))
             throw new RunasCsException("DuplicateTokenEx", true);
         if(AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token) < AccessToken.GetTokenIntegrityLevel(hTokenDuplicateLocal))
             AccessToken.SetTokenIntegrityLevel(hTokenDuplicateLocal, AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token));
-        ImpersonateLoggedOnUser(hTokenDuplicateLocal);
+        result = ImpersonateLoggedOnUser(hTokenDuplicateLocal);
         hTokenDuplicate = hTokenDuplicateLocal;
         return result;
     }
@@ -438,25 +437,17 @@ public class RunasCs
         {
             IntPtr hCurrentProcess = Process.GetCurrentProcess().Handle;
             if (!CreateAnonymousPipeEveryoneAccess(ref hOutputReadTmpLocal, ref hOutputWriteLocal))
-            {
                 throw new RunasCsException("CreatePipe", true);
-            }
             //1998's code. Old but gold https://support.microsoft.com/en-us/help/190351/how-to-spawn-console-processes-with-redirected-standard-handles
             if (!DuplicateHandle(hCurrentProcess, hOutputWriteLocal, hCurrentProcess, out hErrorWriteLocal, 0, true, DUPLICATE_SAME_ACCESS))
-            {
                 throw new RunasCsException("DuplicateHandle stderr write pipe", true);
-            }
             if (!DuplicateHandle(hCurrentProcess, hOutputReadTmpLocal, hCurrentProcess, out hOutputReadLocal, 0, false, DUPLICATE_SAME_ACCESS))
-            {
                 throw new RunasCsException("DuplicateHandle stdout read pipe", true);
-            }
             CloseHandle(hOutputReadTmpLocal);
             hOutputReadTmpLocal = IntPtr.Zero;
             UInt32 PIPE_NOWAIT = 0x00000001;
             if (!SetNamedPipeHandleState(hOutputReadLocal, ref PIPE_NOWAIT, IntPtr.Zero, IntPtr.Zero))
-            {
                 throw new RunasCsException("SetNamedPipeHandleState", true);
-            }
             startupInfo.dwFlags = Startf_UseStdHandles;
             startupInfo.hStdOutput = hOutputWriteLocal;
             startupInfo.hStdError = hErrorWriteLocal;
@@ -559,7 +550,7 @@ public class RunasCs
             Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the --logon-type value '{1}' to have a non filtered token", username, logonTypeNotFiltered));
         // Enable SeImpersonatePrivilege on our current process needed by the seclogon to make the CreateProcessWithTokenW call
         AccessToken.EnablePrivilege("SeImpersonatePrivilege", WindowsIdentity.GetCurrent().Token);
-        // Enable all privileges for the token of the process
+        // Enable all privileges for the token of the new process
         AccessToken.EnableAllPrivileges(hTokenDuplicate);
         if (!CreateProcessWithTokenW(hTokenDuplicate, logonFlags, null, commandLine, CREATE_NO_WINDOW, IntPtr.Zero, null, ref startupInfo, out processInfo))
             throw new RunasCsException("CreateProcessWithTokenW", true);
