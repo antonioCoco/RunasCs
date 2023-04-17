@@ -473,7 +473,7 @@ public class RunasCs
         return isLimitedUserLogon;
     }
 
-    private void RunasSetupStdHandlesForProces(uint processTimeout, string[] remote, ref STARTUPINFO startupInfo, out IntPtr hOutputWrite, out IntPtr hErrorWrite, out IntPtr hOutputRead, out IntPtr socket) {
+    private void RunasSetupStdHandlesForProcess(uint processTimeout, string[] remote, ref STARTUPINFO startupInfo, out IntPtr hOutputWrite, out IntPtr hErrorWrite, out IntPtr hOutputRead, out IntPtr socket) {
         IntPtr hOutputReadTmpLocal = IntPtr.Zero;
         IntPtr hOutputWriteLocal = IntPtr.Zero;
         IntPtr hErrorWriteLocal = IntPtr.Zero;
@@ -667,7 +667,7 @@ public class RunasCs
         startupInfo.lpReserved = null;
         ProcessInformation processInfo = new ProcessInformation();
         // setup the std handles for the process based on the user input
-        RunasSetupStdHandlesForProces(processTimeout, remote, ref startupInfo, out this.hOutputWrite, out this.hErrorWrite, out this.hOutputRead, out socket);
+        RunasSetupStdHandlesForProcess(processTimeout, remote, ref startupInfo, out this.hOutputWrite, out this.hErrorWrite, out this.hOutputRead, out socket);
         // add the proper DACL on the window station and desktop that will be used
         this.stationDaclObj = new WindowStationDACL();
         string desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username, logonType);
@@ -1941,6 +1941,7 @@ class MainClass
     static void Main(string[] args)
     {
         Console.Out.Write(RunasCsMainClass.RunasCsMain(args));
+        Console.Out.Flush();
     }
 }
 
