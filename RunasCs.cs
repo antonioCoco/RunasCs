@@ -1652,7 +1652,7 @@ public static class AccessToken{
 public static class RunasCsMainClass
 {
     private static string help = @"
-RunasCs v1.4 - @splinter_code
+RunasCs v1.5 - @splinter_code
 
 Usage:
     RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout] [--force-profile] [--bypass-uac]
