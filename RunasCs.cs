@@ -320,6 +320,7 @@ public class RunasCs
     private bool ImpersonateLoggedOnUserWithProperIL(IntPtr hToken, out IntPtr hTokenDuplicate) {
         IntPtr hTokenDuplicateLocal = new IntPtr(0);
         bool result = false;
+        // if our main thread was already impersonating remember to restore the previous thread token
         if (WindowsIdentity.GetCurrent(true) != null)
             this.hTokenPreviousImpersonatingThread = WindowsIdentity.GetCurrent(true).Token;
         if (!DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenImpersonation, ref hTokenDuplicateLocal))
@@ -427,6 +428,52 @@ public class RunasCs
         return commandlineRet;
     }
 
+    private bool IsLimitedUserLogon(IntPtr hToken, string username, string domainName, string password, out int logonTypeNotFiltered) {
+        bool isLimitedUserLogon = false;
+        bool isTokenUACFiltered = false;
+        IntPtr hTokenNetwork = IntPtr.Zero;
+        IntPtr hTokenBatch = IntPtr.Zero;
+        IntPtr hTokenService = IntPtr.Zero;
+        bool resultNetworkLogon = false;
+        bool resultBatchLogon = false;
+        bool resultServiceLogon = false;
+        logonTypeNotFiltered = 0;
+        isTokenUACFiltered = AccessToken.IsFilteredUACToken(hToken);
+        if (isTokenUACFiltered)
+        {
+            logonTypeNotFiltered = LOGON32_LOGON_NETWORK_CLEARTEXT;
+            isLimitedUserLogon = true;
+        }
+        else {
+            // Check differences between the requested logon type and non-filtered logon types (Network, Batch, Service)
+            // If IL mismatch, the user has potentially more privileges than the requested logon
+            AccessToken.IntegrityLevel userTokenIL = AccessToken.GetTokenIntegrityLevel(hToken);
+            resultNetworkLogon = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_PROVIDER_DEFAULT, ref hTokenNetwork);
+            resultBatchLogon = LogonUser(username, domainName, password, LOGON32_LOGON_BATCH, LOGON32_PROVIDER_DEFAULT, ref hTokenBatch);
+            resultServiceLogon = LogonUser(username, domainName, password, LOGON32_LOGON_SERVICE, LOGON32_PROVIDER_DEFAULT, ref hTokenService);
+            if (resultNetworkLogon && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenNetwork))
+            {
+                isLimitedUserLogon = true;
+                logonTypeNotFiltered = LOGON32_LOGON_NETWORK_CLEARTEXT;
+            }
+            else if (resultServiceLogon && !isLimitedUserLogon && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenService))
+            {
+                // we check Service logon because by default it has the SeImpersonate privilege, available only in High IL
+                isLimitedUserLogon = true;
+                logonTypeNotFiltered = LOGON32_LOGON_SERVICE;
+            }
+            else if (resultBatchLogon && !isLimitedUserLogon && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenBatch))
+            {
+                isLimitedUserLogon = true;
+                logonTypeNotFiltered = LOGON32_LOGON_BATCH;
+            }
+            if (resultNetworkLogon) CloseHandle(hTokenNetwork);
+            if (resultBatchLogon) CloseHandle(hTokenBatch);
+            if (resultServiceLogon) CloseHandle(hTokenService);
+        }
+        return isLimitedUserLogon;
+    }
+
     private void RunasSetupStdHandlesForProces(uint processTimeout, string[] remote, ref STARTUPINFO startupInfo, out IntPtr hOutputWrite, out IntPtr hErrorWrite, out IntPtr hOutputRead, out IntPtr socket) {
         IntPtr hOutputReadTmpLocal = IntPtr.Zero;
         IntPtr hOutputWriteLocal = IntPtr.Zero;
@@ -472,8 +519,8 @@ public class RunasCs
         IntPtr lpEnvironment = IntPtr.Zero;
         if (!LogonUser(username, domainName, password, logonType, logonProvider, ref hToken))
             throw new RunasCsException("LogonUser", true);
-        if (AccessToken.IsLimitedUACToken(hToken, username, domainName, password, out logonTypeNotFiltered))
-            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the --logon-type value '{1}' to have a non filtered token", username, logonTypeNotFiltered));
+        if (IsLimitedUserLogon(hToken, username, domainName, password, out logonTypeNotFiltered))
+            Console.Out.WriteLine(String.Format("[*] Warning: Logon for user '{0}' is limited. Use the --logon-type value '{1}' to obtain a more privileged token", username, logonTypeNotFiltered));
         if (!DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenImpersonation, ref hTokenDupImpersonation))
             throw new RunasCsException("DuplicateTokenEx", true);
         if (AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token) < AccessToken.GetTokenIntegrityLevel(hTokenDupImpersonation))
@@ -512,11 +559,11 @@ public class RunasCs
         {
             IntPtr hTokenUacCheck = new IntPtr(0);
             if (logonType != LOGON32_LOGON_INTERACTIVE && !bypassUac)
-                Console.Out.WriteLine("[*] Warning: Using function CreateProcessWithLogonW is not compatible with the requested logon type " + logonType.ToString() + ". Reverting to logon type Interactive (2). If you want to force a specific logon type use the flags combination of --remote-impersonation and --logon-type.");
+                Console.Out.WriteLine("[*] Warning: The function CreateProcessWithLogonW is not compatible with the requested logon type " + logonType.ToString() + ". Reverting to the Interactive logon type (2). To force a specific logon type, use the flag combination --remote-impersonation and --logon-type.");
             // we use the logon type 2 - Interactive because CreateProcessWithLogonW internally use this logon type for the logon 
             if (!LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, ref hTokenUacCheck))
                 throw new RunasCsException("LogonUser", true);
-            if (AccessToken.IsLimitedUACToken(hTokenUacCheck, username, domainName, password, out logonTypeNotFiltered))
+            if (IsLimitedUserLogon(hTokenUacCheck, username, domainName, password, out logonTypeNotFiltered))
             {
                 if (bypassUac)
                 {
@@ -525,7 +572,7 @@ public class RunasCs
                 }
                 else
                 {
-                    Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the flags --bypass-uac and --logon-type '{1}' to have a non filtered token", username, logonTypeNotFiltered));
+                    Console.Out.WriteLine(String.Format("[*] Warning: The logon for user '{0}' is limited. Use the flag combination --bypass-uac and --logon-type '{1}' to obtain a more privileged token.", username, logonTypeNotFiltered));
                     if (!CreateProcessWithLogonW(username, domainName, password, logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo))
                         throw new RunasCsException("CreateProcessWithLogonW logon type 2", true);
                 }
@@ -546,8 +593,8 @@ public class RunasCs
             throw new RunasCsException("LogonUser", true);
         if (!DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenPrimary, ref hTokenDuplicate))
             throw new RunasCsException("DuplicateTokenEx", true);
-        if (AccessToken.IsLimitedUACToken(hTokenDuplicate, username, domainName, password, out logonTypeNotFiltered))
-            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the --logon-type value '{1}' to have a non filtered token", username, logonTypeNotFiltered));
+        if (IsLimitedUserLogon(hTokenDuplicate, username, domainName, password, out logonTypeNotFiltered))
+            Console.Out.WriteLine(String.Format("[*] Warning: Logon for user '{0}' is limited. Use the --logon-type value '{1}' to obtain a more privileged token", username, logonTypeNotFiltered));
         // Enable SeImpersonatePrivilege on our current process needed by the seclogon to make the CreateProcessWithTokenW call
         AccessToken.EnablePrivilege("SeImpersonatePrivilege", WindowsIdentity.GetCurrent().Token);
         // Enable all privileges for the token of the new process
@@ -566,8 +613,8 @@ public class RunasCs
             throw new RunasCsException("LogonUser", true);
         if (!DuplicateTokenEx(hToken, AccessToken.TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TokenPrimary, ref hTokenDuplicate))
             throw new RunasCsException("DuplicateTokenEx", true);
-        if (AccessToken.IsLimitedUACToken(hTokenDuplicate, username, domainName, password, out logonTypeNotFiltered))
-            Console.Out.WriteLine(String.Format("[*] Warning: Token retrieved for user '{0}' is limited by UAC. Use the --logon-type value '{1}' to have a non filtered token", username, logonTypeNotFiltered));
+        if (IsLimitedUserLogon(hTokenDuplicate, username, domainName, password, out logonTypeNotFiltered))
+            Console.Out.WriteLine(String.Format("[*] Warning: Logon for user '{0}' is limited. Use the --logon-type value '{1}' to obtain a more privileged token", username, logonTypeNotFiltered));
         GetUserEnvironmentBlock(hTokenDuplicate, username, forceUserProfileCreation, userProfileExists, out lpEnvironment);
         // Enable SeAssignPrimaryTokenPrivilege on our current process needed by the kernel to make the CreateProcessAsUserW call
         AccessToken.EnablePrivilege("SeAssignPrimaryTokenPrivilege", WindowsIdentity.GetCurrent().Token);
@@ -1480,18 +1527,9 @@ public static class AccessToken{
         return privileges;
     }
 
-    public static bool IsLimitedUACToken(IntPtr hToken, string username, string domainName, string password, out int logonTypeNotFiltered) {
-        bool tokenIsElevated = false;
-        bool tokenIsLimited = false;
+    public static bool IsFilteredUACToken(IntPtr hToken) {
         bool tokenIsFiltered = false;
         int tokenInfLength = 0;
-        IntPtr hTokenNetwork = IntPtr.Zero;
-        IntPtr hTokenBatch = IntPtr.Zero;
-        IntPtr hTokenService = IntPtr.Zero;
-        bool resultNetworkLogon = false;
-        bool resultBatchLogon = false;
-        bool resultServiceLogon = false;
-        logonTypeNotFiltered = 0;
         // GetTokenInformation(TokenElevation) does not return true in all cases, e.g. when having an High IL token with SeImpersonate privilege
         if (GetTokenIntegrityLevel(hToken) >= IntegrityLevel.High)
             return false;
@@ -1501,7 +1539,7 @@ public static class AccessToken{
             throw new RunasCsException("GetTokenInformation TokenElevation", true);
         TOKEN_ELEVATION tokenElevation = (TOKEN_ELEVATION)Marshal.PtrToStructure(tokenElevationPtr, typeof(TOKEN_ELEVATION));
         if (tokenElevation.TokenIsElevated > 0) {
-            tokenIsElevated = true;
+            tokenIsFiltered = false;
             Marshal.FreeHGlobal(tokenElevationPtr);
         }
         else {
@@ -1511,42 +1549,10 @@ public static class AccessToken{
             if (!GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenElevationType, tokenElevationTypePtr, tokenInfLength, out tokenInfLength))
                 throw new RunasCsException("GetTokenInformation TokenElevationType", true);
             TOKEN_ELEVATION_TYPE tokenElevationType = (TOKEN_ELEVATION_TYPE)Marshal.PtrToStructure(tokenElevationTypePtr, typeof(TOKEN_ELEVATION_TYPE));
-            if (tokenElevationType.TokenElevationType == 3) { // 3 = TokenElevationTypeLimited
-                logonTypeNotFiltered = LOGON32_LOGON_NETWORK_CLEARTEXT;
-                tokenIsLimited = true;
-            }
+            if (tokenElevationType.TokenElevationType == 3)  // 3 = TokenElevationTypeLimited
+                tokenIsFiltered = true;
             Marshal.FreeHGlobal(tokenElevationTypePtr);
         }
-        // Check differences between the requesteed logon type and non-filtered logon types (Network, Batch, Service)
-        // If IL mismatch, UAC applied some restrictions
-        if (!tokenIsElevated && !tokenIsLimited)
-        {
-            IntegrityLevel userTokenIL = AccessToken.GetTokenIntegrityLevel(hToken);
-            resultNetworkLogon = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_PROVIDER_DEFAULT, ref hTokenNetwork);
-            resultBatchLogon = LogonUser(username, domainName, password, LOGON32_LOGON_BATCH, LOGON32_PROVIDER_DEFAULT, ref hTokenBatch);
-            resultServiceLogon = LogonUser(username, domainName, password, LOGON32_LOGON_SERVICE, LOGON32_PROVIDER_DEFAULT, ref hTokenService);
-            if (resultNetworkLogon && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenNetwork))
-            {
-                tokenIsFiltered = true;
-                logonTypeNotFiltered = LOGON32_LOGON_NETWORK_CLEARTEXT;
-            }
-            else if (resultServiceLogon && !tokenIsFiltered && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenService))
-            {
-                // we check Service logon because by default it has the SeImpersonate privilege, available only in High IL
-                tokenIsFiltered = true;
-                logonTypeNotFiltered = LOGON32_LOGON_SERVICE;
-            }
-            else if (resultBatchLogon && !tokenIsFiltered && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenBatch))
-            {
-                tokenIsFiltered = true;
-                logonTypeNotFiltered = LOGON32_LOGON_BATCH;
-            }
-            if (resultNetworkLogon) CloseHandle(hTokenNetwork);
-            if (resultBatchLogon) CloseHandle(hTokenBatch);
-            if (resultServiceLogon) CloseHandle(hTokenService);
-        }
-        else
-            tokenIsFiltered = true;
         return tokenIsFiltered;
     }
 
