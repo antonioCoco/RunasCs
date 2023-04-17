@@ -129,13 +129,16 @@ and *RunasCs* won't wait for the end of the execution.
 
 ----
 
-* https://decoder.cloud/2018/01/13/potato-and-tokens/
-* https://github.com/dahall/Vanara
-* https://docs.microsoft.com/en-us/previous-versions/aa379608(v=vs.85)
-* https://support.microsoft.com/en-us/help/190351/how-to-spawn-console-processes-with-redirected-standard-handles
-* https://support.microsoft.com/en-us/help/327618/security-services-and-the-interactive-desktop-in-windows
-* https://blogs.msdn.microsoft.com/winsdk/2015/06/03/what-is-up-with-the-application-failed-to-initialize-properly-0xc0000142-error/
-
+* [Potatoes and tokens](https://decoder.cloud/2018/01/13/potato-and-tokens/)
+* [Starting an Interactive Client Process in C++](https://docs.microsoft.com/en-us/previous-versions/aa379608(v=vs.85))
+* [Creating a Child Process with Redirected Input and Output](https://learn.microsoft.com/en-us/windows/win32/procthread/creating-a-child-process-with-redirected-input-and-output)
+* [Interactive Services](https://learn.microsoft.com/en-us/windows/win32/services/interactive-services)
+* [What is up with "The application failed to initialize properly (0xc0000142)" error?](https://blogs.msdn.microsoft.com/winsdk/2015/06/03/what-is-up-with-the-application-failed-to-initialize-properly-0xc0000142-error/)
+* [Getting an Interactive Service Account Shell](https://www.tiraniddo.dev/2020/02/getting-interactive-service-account.html)
+* [Reading Your Way Around UAC (Part 1)](https://www.tiraniddo.dev/2017/05/reading-your-way-around-uac-part-1.html)
+* [Reading Your Way Around UAC (Part 2)](https://www.tiraniddo.dev/2017/05/reading-your-way-around-uac-part-2.html)
+* [Reading Your Way Around UAC (Part 3)](https://www.tiraniddo.dev/2017/05/reading-your-way-around-uac-part-3.html)
+* [Vanara - A set of .NET libraries for Windows implementing PInvoke calls to many native Windows APIs with supporting wrappers](https://github.com/dahall/Vanara)
 
 ### Credits
 
