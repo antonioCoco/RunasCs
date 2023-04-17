@@ -24,7 +24,6 @@ public class RunasCsException : Exception
     public RunasCsException(string message) : base(error_string + message) { }
 
     public RunasCsException(string win32FunctionName, bool returnWin32Error) : base(error_string + win32FunctionName + " failed with error code: " + GetWin32ErrorString()) {}
-
 }
 
 public class RunasCs
@@ -1936,36 +1935,6 @@ Examples:
         return output;
     }
 }
-
-/*
-class MainClass
-{
-    static void Main(string[] args)
-    {
-        string[] argsTest = new string[10];
-        argsTest[0] = "temp3";
-        argsTest[1] = "pwd";
-        //argsTest[2] = "C:\\Windows\\system32\\whoami /all";
-        argsTest[2] = "cmd /c whoami /all";
-        //argsTest[2] = "C:\\Windows\\system32\\ping.exe -n 120 127.0.0.1";
-        //argsTest[2] = "cmd.exe";
-        argsTest[3] = "--function";
-        argsTest[4] = "2";
-        argsTest[5] = "--logon-type";
-        argsTest[6] = "2";
-        //argsTest[7] = "--remote-impersonation";
-        argsTest[7] = "--force-profile";
-        //argsTest[7] = "--bypass-uac";
-        //argsTest[8] = "-t";
-        //argsTest[9] = "0";
-        //argsTest[8] = "--remote";
-        //argsTest[9] = "127.0.0.1:3001";
-        Console.Out.Write(RunasCsMainClass.RunasCsMain(argsTest));
-    }
-}
-*/
-
-
 
 class MainClass
 {
