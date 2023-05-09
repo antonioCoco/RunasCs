@@ -433,9 +433,6 @@ public class RunasCs
         IntPtr hTokenNetwork = IntPtr.Zero;
         IntPtr hTokenBatch = IntPtr.Zero;
         IntPtr hTokenService = IntPtr.Zero;
-        bool resultNetworkLogon = false;
-        bool resultBatchLogon = false;
-        bool resultServiceLogon = false;
         logonTypeNotFiltered = 0;
         isTokenUACFiltered = AccessToken.IsFilteredUACToken(hToken);
         if (isTokenUACFiltered)
@@ -447,28 +444,25 @@ public class RunasCs
             // Check differences between the requested logon type and non-filtered logon types (Network, Batch, Service)
             // If IL mismatch, the user has potentially more privileges than the requested logon
             AccessToken.IntegrityLevel userTokenIL = AccessToken.GetTokenIntegrityLevel(hToken);
-            resultNetworkLogon = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_PROVIDER_DEFAULT, ref hTokenNetwork);
-            resultBatchLogon = LogonUser(username, domainName, password, LOGON32_LOGON_BATCH, LOGON32_PROVIDER_DEFAULT, ref hTokenBatch);
-            resultServiceLogon = LogonUser(username, domainName, password, LOGON32_LOGON_SERVICE, LOGON32_PROVIDER_DEFAULT, ref hTokenService);
-            if (resultNetworkLogon && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenNetwork))
+            if (LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_PROVIDER_DEFAULT, ref hTokenNetwork) && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenNetwork))
             {
                 isLimitedUserLogon = true;
                 logonTypeNotFiltered = LOGON32_LOGON_NETWORK_CLEARTEXT;
             }
-            else if (resultServiceLogon && !isLimitedUserLogon && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenService))
+            else if (!isLimitedUserLogon && LogonUser(username, domainName, password, LOGON32_LOGON_SERVICE, LOGON32_PROVIDER_DEFAULT, ref hTokenService) && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenService))
             {
                 // we check Service logon because by default it has the SeImpersonate privilege, available only in High IL
                 isLimitedUserLogon = true;
                 logonTypeNotFiltered = LOGON32_LOGON_SERVICE;
             }
-            else if (resultBatchLogon && !isLimitedUserLogon && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenBatch))
+            else if (!isLimitedUserLogon && LogonUser(username, domainName, password, LOGON32_LOGON_BATCH, LOGON32_PROVIDER_DEFAULT, ref hTokenBatch) && userTokenIL < AccessToken.GetTokenIntegrityLevel(hTokenBatch))
             {
                 isLimitedUserLogon = true;
                 logonTypeNotFiltered = LOGON32_LOGON_BATCH;
             }
-            if (resultNetworkLogon) CloseHandle(hTokenNetwork);
-            if (resultBatchLogon) CloseHandle(hTokenBatch);
-            if (resultServiceLogon) CloseHandle(hTokenService);
+            if (hTokenNetwork != IntPtr.Zero) CloseHandle(hTokenNetwork);
+            if (hTokenBatch != IntPtr.Zero) CloseHandle(hTokenBatch);
+            if (hTokenService != IntPtr.Zero) CloseHandle(hTokenService);
         }
         return isLimitedUserLogon;
     }
@@ -1284,13 +1278,6 @@ public static class AccessToken{
     private const int SECURITY_MANDATORY_PROTECTED_PROCESS_RID = 0x5000;
     private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
     private static readonly byte[] MANDATORY_LABEL_AUTHORITY = new byte[] { 0, 0, 0, 0, 0, 16 };
-    private const int LOGON32_PROVIDER_DEFAULT = 0;
-    private const int LOGON32_LOGON_INTERACTIVE = 2;
-    private const int LOGON32_LOGON_NETWORK = 3;
-    private const int LOGON32_LOGON_BATCH = 4;
-    private const int LOGON32_LOGON_SERVICE = 5;
-    private const int LOGON32_LOGON_UNLOCK = 7;
-    private const int LOGON32_LOGON_NETWORK_CLEARTEXT = 8;
 
     public const UInt32 STANDARD_RIGHTS_REQUIRED = 0x000F0000;
     public const UInt32 STANDARD_RIGHTS_READ = 0x00020000;
