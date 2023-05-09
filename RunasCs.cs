@@ -392,12 +392,7 @@ public class RunasCs
     private bool CreateProcessWithLogonWUacBypass(int logonType, uint logonFlags, string username, string domainName, string password, string processPath, string commandLine, ref STARTUPINFO startupInfo, out ProcessInformation processInfo) {
         bool result = false;
         IntPtr hToken = new IntPtr(0);
-        // the below logon types are not filtered by UAC, we allow login with them. Otherwise stick with NetworkCleartext
-        if (logonType == LOGON32_LOGON_NETWORK || logonType == LOGON32_LOGON_BATCH || logonType == LOGON32_LOGON_SERVICE || logonType == LOGON32_LOGON_NETWORK_CLEARTEXT)
-            result = LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken);
-        else
-            result = LogonUser(username, domainName, password, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_PROVIDER_DEFAULT, ref hToken);
-        if (result == false)
+        if (!LogonUser(username, domainName, password, logonType, LOGON32_PROVIDER_DEFAULT, ref hToken))
             throw new RunasCsException("CreateProcessWithLogonWUacBypass: LogonUser", true);
         // here we set the IL of the new token equal to our current process IL. Needed or seclogon will fail.
         AccessToken.SetTokenIntegrityLevel(hToken, AccessToken.GetTokenIntegrityLevel(WindowsIdentity.GetCurrent().Token));
@@ -547,34 +542,32 @@ public class RunasCs
             if (!CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo))
                 throw new RunasCsException("CreateProcessWithLogonW logon type 9", true);
         }
+        else if (bypassUac)
+        {
+            int logonTypeBypassUac;
+            // the below logon types are not filtered by UAC, we allow login with them. Otherwise stick with NetworkCleartext
+            if (logonType == LOGON32_LOGON_NETWORK || logonType == LOGON32_LOGON_BATCH || logonType == LOGON32_LOGON_SERVICE || logonType == LOGON32_LOGON_NETWORK_CLEARTEXT)
+                logonTypeBypassUac = logonType;
+            else {
+                Console.Out.WriteLine("[*] Warning: UAC Bypass is not compatible with logon type '" + logonType.ToString() + "'. Reverting to the NetworkCleartext logon type '8'. To force a specific logon type, use the flag combination --bypass-uac and --logon-type.");
+                logonTypeBypassUac = LOGON32_LOGON_NETWORK_CLEARTEXT;
+            }
+            if (!CreateProcessWithLogonWUacBypass(logonTypeBypassUac, logonFlags, username, domainName, password, null, commandLine, ref startupInfo, out processInfo))
+                throw new RunasCsException("CreateProcessWithLogonWUacBypass", true);
+        }
         else
         {
             IntPtr hTokenUacCheck = new IntPtr(0);
-            if (logonType != LOGON32_LOGON_INTERACTIVE && !bypassUac)
+            if (logonType != LOGON32_LOGON_INTERACTIVE)
                 Console.Out.WriteLine("[*] Warning: The function CreateProcessWithLogonW is not compatible with the requested logon type " + logonType.ToString() + ". Reverting to the Interactive logon type (2). To force a specific logon type, use the flag combination --remote-impersonation and --logon-type.");
             // we use the logon type 2 - Interactive because CreateProcessWithLogonW internally use this logon type for the logon 
             if (!LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, ref hTokenUacCheck))
                 throw new RunasCsException("LogonUser", true);
             if (IsLimitedUserLogon(hTokenUacCheck, username, domainName, password, out logonTypeNotFiltered))
-            {
-                if (bypassUac)
-                {
-                    if (!CreateProcessWithLogonWUacBypass(logonType, logonFlags, username, domainName, password, null, commandLine, ref startupInfo, out processInfo))
-                        throw new RunasCsException("CreateProcessWithLogonWUacBypass", true);
-                }
-                else
-                {
-                    Console.Out.WriteLine(String.Format("[*] Warning: The logon for user '{0}' is limited. Use the flag combination --bypass-uac and --logon-type '{1}' to obtain a more privileged token.", username, logonTypeNotFiltered));
-                    if (!CreateProcessWithLogonW(username, domainName, password, logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo))
-                        throw new RunasCsException("CreateProcessWithLogonW logon type 2", true);
-                }
-            }
-            else
-            {
-                if (!CreateProcessWithLogonW(username, domainName, password, logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo))
-                    throw new RunasCsException("CreateProcessWithLogonW logon type 2", true);
-            }
+                Console.Out.WriteLine(String.Format("[*] Warning: The logon for user '{0}' is limited. Use the flag combination --bypass-uac and --logon-type '{1}' to obtain a more privileged token.", username, logonTypeNotFiltered));
             CloseHandle(hTokenUacCheck);
+            if (!CreateProcessWithLogonW(username, domainName, password, logonFlags, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo))
+                throw new RunasCsException("CreateProcessWithLogonW logon type 2", true);
         }
     }
 
