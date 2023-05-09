@@ -549,7 +549,7 @@ public class RunasCs
             if (logonType == LOGON32_LOGON_NETWORK || logonType == LOGON32_LOGON_BATCH || logonType == LOGON32_LOGON_SERVICE || logonType == LOGON32_LOGON_NETWORK_CLEARTEXT)
                 logonTypeBypassUac = logonType;
             else {
-                Console.Out.WriteLine("[*] Warning: UAC Bypass is not compatible with logon type '" + logonType.ToString() + "'. Reverting to the NetworkCleartext logon type '8'. To force a specific logon type, use the flag combination --bypass-uac and --logon-type.");
+                // Console.Out.WriteLine("[*] Warning: UAC Bypass is not compatible with logon type '" + logonType.ToString() + "'. Reverting to the NetworkCleartext logon type '8'. To force a specific logon type, use the flag combination --bypass-uac and --logon-type.");
                 logonTypeBypassUac = LOGON32_LOGON_NETWORK_CLEARTEXT;
             }
             if (!CreateProcessWithLogonWUacBypass(logonTypeBypassUac, logonFlags, username, domainName, password, null, commandLine, ref startupInfo, out processInfo))
