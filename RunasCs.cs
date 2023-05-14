@@ -39,6 +39,7 @@ public class RunasCs
     private const int LOGON32_LOGON_SERVICE = 5;
     private const int LOGON32_LOGON_NETWORK_CLEARTEXT = 8;
     private const int LOGON32_LOGON_NEW_CREDENTIALS = 9;
+    private const int ERROR_LOGON_TYPE_NOT_GRANTED = 1385;
     private const int BUFFER_SIZE_PIPE = 1048576;
     private const uint CREATE_NO_WINDOW = 0x08000000;
     private const uint CREATE_SUSPENDED = 0x00000004;
@@ -462,6 +463,36 @@ public class RunasCs
         return isLimitedUserLogon;
     }
 
+    private void CheckAvailableUserLogonType(string username, string password, string domainName, int logonType, int logonProvider) {
+        IntPtr hTokenCheck1 = IntPtr.Zero;
+        if (!LogonUser(username, domainName, password, logonType, logonProvider, ref hTokenCheck1)) {
+            if (Marshal.GetLastWin32Error() == ERROR_LOGON_TYPE_NOT_GRANTED) {
+                int availableLogonType = 0;
+                int[] logonTypeTryOrder = new int[] { LOGON32_LOGON_SERVICE, LOGON32_LOGON_BATCH, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_LOGON_NETWORK, LOGON32_LOGON_INTERACTIVE};
+                foreach (int logonTypeTry in logonTypeTryOrder)
+                {
+                    IntPtr hTokenCheck2 = IntPtr.Zero;
+                    if (LogonUser(username, domainName, password, logonTypeTry, logonProvider, ref hTokenCheck2)) {
+                        availableLogonType = logonTypeTry;
+                        if (AccessToken.GetTokenIntegrityLevel(hTokenCheck2) > AccessToken.IntegrityLevel.Medium)
+                        {
+                            availableLogonType = logonTypeTry;
+                            CloseHandle(hTokenCheck2);
+                            break;
+                        }
+                    }
+                    if (hTokenCheck2 != IntPtr.Zero) CloseHandle(hTokenCheck2);
+                }
+                if (availableLogonType != 0)
+                    throw new RunasCsException(String.Format("Selected logon type '{0}' is not granted to the user '{1}'. Use available logon type '{2}'.", logonType, username, availableLogonType.ToString()));
+                else
+                    throw new RunasCsException("LogonUser", true);
+            }
+            throw new RunasCsException("LogonUser", true);
+        }
+        if (hTokenCheck1 != IntPtr.Zero) CloseHandle(hTokenCheck1);
+    }
+
     private void RunasSetupStdHandlesForProcess(uint processTimeout, string[] remote, ref STARTUPINFO startupInfo, out IntPtr hOutputWrite, out IntPtr hErrorWrite, out IntPtr hOutputRead, out IntPtr socket) {
         IntPtr hOutputReadTmpLocal = IntPtr.Zero;
         IntPtr hOutputWriteLocal = IntPtr.Zero;
@@ -537,8 +568,6 @@ public class RunasCs
     private void RunasCreateProcessWithLogonW(string username, string domainName, string password, int logonType, uint logonFlags, string commandLine, bool bypassUac, ref STARTUPINFO startupInfo, ref ProcessInformation processInfo, ref int logonTypeNotFiltered) {
         if (logonType == LOGON32_LOGON_NEW_CREDENTIALS)
         {
-            if (domainName == "")
-                domainName = ".";
             if (!CreateProcessWithLogonW(username, domainName, password, LOGON_NETCREDENTIALS_ONLY, null, commandLine, CREATE_NO_WINDOW, (UInt32)0, null, ref startupInfo, out processInfo))
                 throw new RunasCsException("CreateProcessWithLogonW logon type 9", true);
         }
@@ -548,7 +577,8 @@ public class RunasCs
             // the below logon types are not filtered by UAC, we allow login with them. Otherwise stick with NetworkCleartext
             if (logonType == LOGON32_LOGON_NETWORK || logonType == LOGON32_LOGON_BATCH || logonType == LOGON32_LOGON_SERVICE || logonType == LOGON32_LOGON_NETWORK_CLEARTEXT)
                 logonTypeBypassUac = logonType;
-            else {
+            else
+            {
                 // Console.Out.WriteLine("[*] Warning: UAC Bypass is not compatible with logon type '" + logonType.ToString() + "'. Reverting to the NetworkCleartext logon type '8'. To force a specific logon type, use the flag combination --bypass-uac and --logon-type.");
                 logonTypeBypassUac = LOGON32_LOGON_NETWORK_CLEARTEXT;
             }
@@ -559,7 +589,9 @@ public class RunasCs
         {
             IntPtr hTokenUacCheck = new IntPtr(0);
             if (logonType != LOGON32_LOGON_INTERACTIVE)
-                Console.Out.WriteLine("[*] Warning: The function CreateProcessWithLogonW is not compatible with the requested logon type " + logonType.ToString() + ". Reverting to the Interactive logon type (2). To force a specific logon type, use the flag combination --remote-impersonation and --logon-type.");
+                Console.Out.WriteLine("[*] Warning: The function CreateProcessWithLogonW is not compatible with the requested logon type '" + logonType.ToString() + "'. Reverting to the Interactive logon type '2'. To force a specific logon type, use the flag combination --remote-impersonation and --logon-type.");
+            // we check if the user has been granted the logon type requested, if not we show a message suggesting which logon type can be used to succesfully logon
+            CheckAvailableUserLogonType(username, password, domainName, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT);
             // we use the logon type 2 - Interactive because CreateProcessWithLogonW internally use this logon type for the logon 
             if (!LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, ref hTokenUacCheck))
                 throw new RunasCsException("LogonUser", true);
@@ -648,6 +680,7 @@ public class RunasCs
     {
         string commandLine = ParseCommonProcessesInCommandline(cmd);
         int logonProvider = LOGON32_PROVIDER_DEFAULT;
+        int logonTypeNotFiltered = 0;
         STARTUPINFO startupInfo = new STARTUPINFO();
         startupInfo.cb = Marshal.SizeOf(startupInfo);
         startupInfo.lpReserved = null;
@@ -658,8 +691,14 @@ public class RunasCs
         this.stationDaclObj = new WindowStationDACL();
         string desktopName = this.stationDaclObj.AddAclToActiveWindowStation(domainName, username, logonType);
         startupInfo.lpDesktop = desktopName;
-        if (logonType == LOGON32_LOGON_NEW_CREDENTIALS) logonProvider = LOGON32_PROVIDER_WINNT50;
-        int logonTypeNotFiltered = 0;
+        // setup proper logon provider for new credentials (9) logons
+        if (logonType == LOGON32_LOGON_NEW_CREDENTIALS) {
+            logonProvider = LOGON32_PROVIDER_WINNT50;
+            if (domainName == "") // fixing bugs in seclogon when using LOGON32_LOGON_NEW_CREDENTIALS...
+                domainName = ".";
+        } 
+        // we check if the user has been granted the logon type requested, if not we show a message suggesting which logon type can be used to succesfully logon
+        CheckAvailableUserLogonType(username, password, domainName, logonType, logonProvider);
         // Use the proper CreateProcess* function
         if (remoteImpersonation)
             RunasRemoteImpersonation(username, domainName, password, logonType, logonProvider, commandLine, ref startupInfo, ref processInfo, ref logonTypeNotFiltered);
