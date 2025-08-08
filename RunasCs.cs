@@ -1157,7 +1157,7 @@ public class RunasNtlmPth
     
     public byte[] GetMd5Hmac(byte[] key, object data)
     {
-        using (var algo = new HMACMD5(key))
+        using (HMACMD5 algo = new HMACMD5(key))
         {
             byte[] dataBytes;
             if (data is string)
@@ -1209,14 +1209,12 @@ public class RunasNtlmPth
         IntPtr accessToken;
         uint flags = 0;
         
-        SEC_WINNT_AUTH_IDENTITY_W identity = new SEC_WINNT_AUTH_IDENTITY_W
-        {
-            Domain = domain,
-            DomainLength = (uint)domain.Length,
-            User = username, 
-            UserLength = (uint)username.Length,
-            Flags = 1,
-        };
+        SEC_WINNT_AUTH_IDENTITY_W identity = new SEC_WINNT_AUTH_IDENTITY_W();
+		identity.Domain = domain;
+		identity.DomainLength = (uint)domain.Length;
+		identity.User = username;
+		identity.UserLength = (uint)username.Length;
+		identity.Flags = 1;
         
         SecurityStatus ss = AcquireCredentialsHandle(
             null,
@@ -1296,17 +1294,20 @@ public class RunasNtlmPth
         }
         
         // negotiate token to bytes
-        SecBuffer secNegotiateToken = Marshal.PtrToStructure<SecBuffer>(negotiateToken.pBuffers);
+        SecBuffer secNegotiateToken = new SecBuffer();
+		Marshal.PtrToStructure(negotiateToken.pBuffers, secNegotiateToken);
         byte[] pNegotiateToken = new byte[secNegotiateToken.cbBuffer];
         Marshal.Copy(secNegotiateToken.pvBuffer, pNegotiateToken, 0, secNegotiateToken.cbBuffer);
         
         // challenge token to bytes
-        SecBuffer secChallengeToken = Marshal.PtrToStructure<SecBuffer>(challengeToken.pBuffers);
+        SecBuffer secChallengeToken = new SecBuffer();
+		Marshal.PtrToStructure(challengeToken.pBuffers, secChallengeToken);
         byte[] pChallengeToken = new byte[secChallengeToken.cbBuffer];
         Marshal.Copy(secChallengeToken.pvBuffer, pChallengeToken, 0, secChallengeToken.cbBuffer);
         
         // authenticate token to bytes
-        SecBuffer secAuthenticateToken = Marshal.PtrToStructure<SecBuffer>(authenticateToken.pBuffers);
+        SecBuffer secAuthenticateToken = new SecBuffer();
+		Marshal.PtrToStructure(authenticateToken.pBuffers, secAuthenticateToken);
         byte[] pAuthenticateToken = new byte[secAuthenticateToken.cbBuffer];
         Marshal.Copy(secAuthenticateToken.pvBuffer, pAuthenticateToken, 0, secAuthenticateToken.cbBuffer);
             
