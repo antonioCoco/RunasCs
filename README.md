@@ -124,6 +124,8 @@ Otherwise, you can try the flag **--bypass-uac** for an attempt in bypassing the
 By default, the calling process (*RunasCs*) will wait until the end of the execution of the spawned process. 
 If you need to spawn a background or async process, i.e. spawning a reverse shell, you need to set the parameter ``-t timeout`` to ``0``. In this case *RunasCs* won't wait for the end of the newly spawned process execution.
 
+Starting processes with `--function 0` (`CreateProcessAsUserW`) require the `SE_ASSIGNPRIMARYTOKEN_NAME` privileges, which is typically only held by the inbuilt `System` account. One can use [PsExec](https://learn.microsoft.com/en-us/sysinternals/downloads/psexec) and run `PsExec.exe -i -s cmd.exe` to start a command prompt under the `System` account.
+
 ### References
 
 ----
